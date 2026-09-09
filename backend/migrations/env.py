@@ -26,9 +26,11 @@ from backend.app.persistence.base import Base  # noqa: E402
 import backend.app.persistence.outbox  # noqa: E402,F401
 import backend.app.modules.identity.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.asset.infrastructure.tables  # noqa: E402,F401
+import backend.app.modules.dataset.infrastructure.tables  # noqa: E402,F401
+import backend.app.modules.evaluation.infrastructure.tables  # noqa: E402,F401
 from backend.app.settings import Settings  # noqa: E402
 
-MODULE_PREFIXES = ("identity", "asset", "platform")
+MODULE_PREFIXES = ("identity", "asset", "dataset", "evaluation", "platform")
 
 
 def _metadata_for(module: str | None) -> MetaData:

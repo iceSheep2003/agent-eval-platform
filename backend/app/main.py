@@ -19,13 +19,22 @@ from .api import errors as api_errors
 from .container import Container
 from .contracts import CONTRACT_VERSION
 from .modules.asset.api.router import router as asset_router
+from .modules.dataset.api.router import router as dataset_router
+from .modules.evaluation.api.router import router as evaluation_router
 from .modules.identity.api.router import auth_router, workspace_router
 from .modules.observability.api.ingest import router as ingest_router
 from .modules.observability.api.router import router as trace_router
 from .schemas.response import ok
 
 #: 控制台路由表。新模块在这里登记，自动获得 `/api` 与 `/api/v1` 两个前缀。
-CONSOLE_ROUTERS = (auth_router, workspace_router, asset_router, trace_router)
+CONSOLE_ROUTERS = (
+    auth_router,
+    workspace_router,
+    asset_router,
+    dataset_router,
+    evaluation_router,
+    trace_router,
+)
 
 #: 机器面路由表（SDK 上报、Gateway）。只挂 `/v1`，不走 `/api`。
 MACHINE_ROUTERS = (ingest_router,)

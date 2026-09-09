@@ -73,7 +73,67 @@ async def seed(container: Container) -> dict[str, str]:
             created[username] = user.id
 
         await uow.commit()
+    await _seed_evaluation(container, workspace)
     return created
+
+
+#: 能力 → 维度（weight / threshold / 评估器），供前端目录页展示
+DEMO_CAPABILITIES = (
+    (
+        "回答质量",
+        "最终答案是否准确、完整、可读",
+        (
+            ("答案相关性", 0.6, 0.85, ("answer_exact_match", "llm_judge")),
+            ("答案完整性", 0.4, 0.80, ("task_completion",)),
+        ),
+    ),
+    (
+        "工具使用",
+        "是否调用了正确的工具、参数是否符合 Schema",
+        (
+            ("工具正确率", 0.7, 0.95, ("tool_name_correctness",)),
+            ("参数合规率", 0.3, 0.95, ("tool_argument_schema",)),
+        ),
+    ),
+)
+
+
+async def _seed_evaluation(container: Container, workspace: Workspace) -> None:
+    from .contracts.common import Determinism
+    from .modules.evaluation.domain.models import Capability, ScoreDimension
+    from .modules.evaluation.infrastructure.repositories import CapabilityRepository
+
+    async with UnitOfWork(container.database) as uow:
+        repo = CapabilityRepository(uow.session)
+        existing = {item.name for item in await repo.list_for_workspace(workspace.id)}
+        now = container.clock.now()
+        for name, description, dimensions in DEMO_CAPABILITIES:
+            if name in existing:
+                continue
+            capability = Capability(
+                id=new_id("capability"),
+                workspace_id=workspace.id,
+                name=name,
+                description=description,
+                enabled=True,
+                created_at=now,
+            )
+            repo.add(capability)
+            for dim_name, weight, threshold, evaluators in dimensions:
+                repo.add_dimension(
+                    ScoreDimension(
+                        id=new_id("dimension"),
+                        capability_id=capability.id,
+                        workspace_id=workspace.id,
+                        name=dim_name,
+                        weight=weight,
+                        threshold=threshold,
+                        evaluator_names=evaluators,
+                        score=None,
+                        created_at=now,
+                    )
+                )
+        await uow.commit()
 
 
 async def main() -> int:

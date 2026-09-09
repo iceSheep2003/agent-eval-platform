@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .modules.asset.application.services import AssetService
+from .modules.dataset.application.services import DatasetService
+from .modules.evaluation.application.services import EvaluationService
 from .modules.identity.application.services import IdentityService
 from .modules.identity.domain.authorizer import Authorizer
 from .modules.observability.application.services import TraceService
@@ -28,6 +30,8 @@ class Container:
     authorizer: Authorizer
     identity: IdentityService
     assets: AssetService
+    datasets: DatasetService
+    evaluations: EvaluationService
     traces: TraceService
     command_queue: CommandQueue
 
@@ -46,6 +50,8 @@ class Container:
             session_absolute_hours=resolved.session_absolute_hours,
         )
         assets = AssetService(database, resolved_clock, identity)
+        datasets = DatasetService(database, resolved_clock)
+        evaluations = EvaluationService(database, resolved_clock, datasets, assets)
         traces = TraceService(database, resolved_clock, assets)
         command_queue = CommandQueue(
             database,
@@ -63,6 +69,8 @@ class Container:
             authorizer=authorizer,
             identity=identity,
             assets=assets,
+            datasets=datasets,
+            evaluations=evaluations,
             traces=traces,
             command_queue=command_queue,
         )

@@ -9,10 +9,10 @@
 
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
-| **M0** | 骨架 + 认证 + 权限 + 队列基线 + Alembic | ✅ 完成（63 tests） |
+| **M0** | 骨架 + 认证 + 权限 + 队列基线 + Alembic | ✅ 完成（78 tests） |
 | **M1** | SDK 上报闭环（asset + observability + ingest） | ✅ 完成 |
-| **M2** | 数据集 + 评测策略 | ⬜ 未开始（数据模型见 [backend-dataset.md](backend-dataset.md)） |
-| **M3** | 评测执行闭环（Run/Trial/Worker） | ⬜ 未开始 |
+| **M2** | 数据集 + 评测策略 | ✅ 完成（模型见 [backend-dataset.md](backend-dataset.md)） |
+| **M3** | 评测执行闭环（Run/Trial/Worker） | ⬜ 下一步 |
 | **M4** | 证据回流 + 前端接真数据 | ⬜ 未开始 |
 | **M5** | 发布控制（P1） | ⬜ 未开始 |
 
