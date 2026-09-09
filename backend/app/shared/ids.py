@@ -33,6 +33,7 @@ PREFIXES: dict[str, str] = {
     "asset": "ast",
     "version": "ver",
     "channel_binding": "cb",
+    "binding": "bnd",
     "credential": "cred",
     "artifact": "art",
     # dataset

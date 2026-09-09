@@ -16,6 +16,8 @@ AssetLifecycle = Literal["draft", "active", "archived"]
 ConnectType = Literal["sdk", "github", "package"]
 TenantScope = Literal["workspace_shared", "tenant_bound"]
 CredentialStatus = Literal["active", "expiring", "revoked"]
+#: 引用解析方式：跟随通道（默认）或锁定具体版本。
+ResolveMode = Literal["channel", "pinned"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +64,36 @@ class ChannelBinding:
     version_id: Id | None
     bound_at: datetime | None
     bound_by: Id | None
+
+
+@dataclass(frozen=True, slots=True)
+class AssetBinding:
+    """消费方（Agent）对能力资产（Skill / MCP / 知识库）的引用。
+
+    绑定指向**通道**还是**固定版本**由 `resolve_mode` 决定：
+    指向通道时，能力资产晋级后引用方自动用上新版本，不必重冻 Agent；
+    但 Run 启动时仍会把解析结果冻结进 `Run.binding_snapshot`，历史可复现。
+    """
+
+    id: Id
+    workspace_id: Id
+    consumer_asset_id: Id
+    #: None = 该 Agent 的所有版本共用这条绑定。
+    consumer_version_id: Id | None
+    provider_asset_id: Id
+    provider_kind: AssetKind
+    resolve_mode: ResolveMode
+    provider_channel: Channel | None
+    provider_version_id: Id | None
+    tenant_scope: str
+    created_by: Id
+    created_at: datetime
+
+    def target_channel(self) -> Channel | None:
+        """`resolve_mode=channel` 时的目标通道；默认 `live`。"""
+        if self.resolve_mode != "channel":
+            return None
+        return self.provider_channel or Channel.LIVE
 
 
 @dataclass(frozen=True, slots=True)

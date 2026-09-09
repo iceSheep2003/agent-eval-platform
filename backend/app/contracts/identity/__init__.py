@@ -39,6 +39,10 @@ class Permission(StrEnum):
     ASSET_VERSION_CREATE = "asset:version:create"
     ASSET_CREDENTIAL_CREATE = "asset:credential:create"
     ASSET_CREDENTIAL_REVOKE = "asset:credential:revoke"
+    #: 把能力资产（Skill / MCP / 知识库）引用到自己的 Agent 上。
+    #: 判定资源是**消费方 Agent**（owner-scoped），不是被引用的资源——
+    #: 否则「我能改自己的 Agent」和「我能用别人的 Skill」会纠缠在一起。
+    ASSET_BIND = "asset:bind"
 
     # dataset
     DATASET_READ = "dataset:read"

@@ -5,13 +5,27 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....contracts.common import AssetKind, Channel, CredentialKind, VersionLifecycle
 from ....shared.clock import ensure_aware
-from ..domain.models import Artifact, Asset, AssetVersion, ChannelBinding, Credential
-from .tables import ArtifactRow, AssetRow, AssetVersionRow, ChannelBindingRow, CredentialRow
+from ..domain.models import (
+    Artifact,
+    Asset,
+    AssetBinding,
+    AssetVersion,
+    ChannelBinding,
+    Credential,
+)
+from .tables import (
+    ArtifactRow,
+    AssetBindingRow,
+    AssetRow,
+    AssetVersionRow,
+    ChannelBindingRow,
+    CredentialRow,
+)
 
 
 def _asset(row: AssetRow) -> Asset:
@@ -239,6 +253,128 @@ class ChannelBindingRepository:
         row.version_id = binding.version_id
         row.bound_at = binding.bound_at
         row.bound_by = binding.bound_by
+
+
+def _binding_ref(row: AssetBindingRow) -> AssetBinding:
+    return AssetBinding(
+        id=row.id,
+        workspace_id=row.workspace_id,
+        consumer_asset_id=row.consumer_asset_id,
+        consumer_version_id=row.consumer_version_id,
+        provider_asset_id=row.provider_asset_id,
+        provider_kind=AssetKind(row.provider_kind),
+        resolve_mode=row.resolve_mode,  # type: ignore[arg-type]
+        provider_channel=Channel(row.provider_channel) if row.provider_channel else None,
+        provider_version_id=row.provider_version_id,
+        tenant_scope=row.tenant_scope,
+        created_by=row.created_by,
+        created_at=ensure_aware(row.created_at),
+    )
+
+
+class AssetBindingRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, binding_id: str, workspace_id: str) -> AssetBinding | None:
+        stmt = select(AssetBindingRow).where(
+            AssetBindingRow.id == binding_id, AssetBindingRow.workspace_id == workspace_id
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _binding_ref(row) if row else None
+
+    async def find(
+        self,
+        consumer_asset_id: str,
+        provider_asset_id: str,
+        consumer_version_id: str | None,
+    ) -> AssetBinding | None:
+        stmt = select(AssetBindingRow).where(
+            AssetBindingRow.consumer_asset_id == consumer_asset_id,
+            AssetBindingRow.provider_asset_id == provider_asset_id,
+            AssetBindingRow.consumer_version_id.is_(consumer_version_id)
+            if consumer_version_id is None
+            else AssetBindingRow.consumer_version_id == consumer_version_id,
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _binding_ref(row) if row else None
+
+    async def list_for_consumer(
+        self, consumer_asset_id: str, consumer_version_id: str | None = None
+    ) -> Sequence[AssetBinding]:
+        """消费方视角：这个 Agent 引用了哪些能力资产。
+
+        Agent 版本级绑定与 Agent 级绑定（`consumer_version_id IS NULL`）都算数——
+        后者对所有版本生效，查询时不能漏。
+        """
+        stmt = select(AssetBindingRow).where(
+            AssetBindingRow.consumer_asset_id == consumer_asset_id
+        )
+        if consumer_version_id is not None:
+            stmt = stmt.where(
+                (AssetBindingRow.consumer_version_id == consumer_version_id)
+                | (AssetBindingRow.consumer_version_id.is_(None))
+            )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_binding_ref(row) for row in rows]
+
+    async def list_for_provider(self, provider_asset_id: str) -> Sequence[AssetBinding]:
+        """被引用视角：谁在用这个能力资产（影响面查询）。"""
+        stmt = (
+            select(AssetBindingRow)
+            .where(AssetBindingRow.provider_asset_id == provider_asset_id)
+            .order_by(AssetBindingRow.created_at.desc())
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_binding_ref(row) for row in rows]
+
+    async def count_for_provider(self, provider_asset_id: str) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(AssetBindingRow)
+            .where(AssetBindingRow.provider_asset_id == provider_asset_id)
+        )
+        return int((await self._session.execute(stmt)).scalar_one())
+
+    async def count_for_providers(self, provider_asset_ids: Sequence[str]) -> dict[str, int]:
+        """列表页用：一次查出多个资源的引用数，避免 N+1。"""
+        if not provider_asset_ids:
+            return {}
+        stmt = (
+            select(AssetBindingRow.provider_asset_id, func.count())
+            .where(AssetBindingRow.provider_asset_id.in_(list(provider_asset_ids)))
+            .group_by(AssetBindingRow.provider_asset_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {provider_id: int(count) for provider_id, count in rows}
+
+    def add(self, binding: AssetBinding) -> None:
+        self._session.add(
+            AssetBindingRow(
+                id=binding.id,
+                workspace_id=binding.workspace_id,
+                consumer_asset_id=binding.consumer_asset_id,
+                consumer_version_id=binding.consumer_version_id,
+                provider_asset_id=binding.provider_asset_id,
+                provider_kind=binding.provider_kind.value,
+                resolve_mode=binding.resolve_mode,
+                provider_channel=(
+                    binding.provider_channel.value if binding.provider_channel else None
+                ),
+                provider_version_id=binding.provider_version_id,
+                tenant_scope=binding.tenant_scope,
+                created_by=binding.created_by,
+            )
+        )
+
+    async def delete(self, binding_id: str, workspace_id: str) -> bool:
+        result = await self._session.execute(
+            delete(AssetBindingRow).where(
+                AssetBindingRow.id == binding_id,
+                AssetBindingRow.workspace_id == workspace_id,
+            )
+        )
+        return bool(result.rowcount)
 
 
 class CredentialRepository:

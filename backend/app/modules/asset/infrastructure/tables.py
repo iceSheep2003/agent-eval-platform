@@ -67,6 +67,39 @@ class ChannelBindingRow(Base, TimestampMixin):
     asset: Mapped["AssetRow"] = relationship()
 
 
+class AssetBindingRow(Base, TimestampMixin):
+    """消费方（Agent）→ 能力资产（Skill / MCP / 知识库）的引用。
+
+    **不复制资源内容**，只存指针；`resolve_mode` 决定指针怎么解析成具体版本。
+    """
+
+    __tablename__ = "asset_binding"
+    __table_args__ = (
+        UniqueConstraint(
+            "consumer_asset_id",
+            "provider_asset_id",
+            "consumer_version_id",
+            name="uq_binding_consumer_provider_version",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    consumer_asset_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    #: NULL = 该 Agent 的**所有**版本共用这条绑定。
+    consumer_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    provider_asset_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    #: 冗余判别列：按类型反查「谁在用 MCP」时不用回表。
+    provider_kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    #: channel | pinned
+    resolve_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="channel")
+    provider_channel: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    provider_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: workspace_shared | tenant_id
+    tenant_scope: Mapped[str] = mapped_column(String(64), nullable=False, default="workspace_shared")
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
 class CredentialRow(Base, TimestampMixin):
     __tablename__ = "asset_credential"
 

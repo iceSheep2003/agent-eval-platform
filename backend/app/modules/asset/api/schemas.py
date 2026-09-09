@@ -81,6 +81,89 @@ class IssuedCredentialDTO(BaseModel):
     created_at: datetime
 
 
+# --------------------------------------------------------------------------- #
+# 能力资产（Skill / MCP / 知识库）
+# --------------------------------------------------------------------------- #
+
+#: 对外只暴露规范值。前端历史值 `knowledge` 在请求里作为别名接受，出口一律 `knowledge_base`。
+CapabilityKind = Literal["skill", "mcp", "knowledge_base"]
+
+
+class RegisterCapabilityRequest(BaseModel):
+    """`POST /api/assets`。`spec` 由对应 kind 的校验器校验，失败返回 422 + 字段路径。"""
+
+    kind: Literal["skill", "mcp", "knowledge_base", "knowledge"]
+    name: str = Field(min_length=1, max_length=128)
+    description: str = Field(default="", max_length=512)
+    spec: dict[str, Any] = Field(default_factory=dict)
+    #: 知识库常按租户隔离；填了就是 tenant_bound。
+    tenant_id: str | None = None
+
+
+class CapabilityChannelDTO(BaseModel):
+    """通道**指针**。版本详情走 `CapabilityVersionDTO`，两者不要混。"""
+
+    channel: str
+    version_id: str | None
+    version_label: str | None
+    bound_at: datetime | None
+    bound_by: str | None
+
+
+class CapabilityVersionDTO(BaseModel):
+    id: str
+    version_label: str
+    lifecycle: str
+    spec: dict[str, Any]
+    created_by: str
+    created_at: datetime
+
+
+class CapabilityAssetDTO(BaseModel):
+    id: str
+    kind: str
+    name: str
+    description: str
+    owner: str
+    lifecycle: str
+    tenant_scope: str
+    tenant_id: str | None = None
+    version_count: int = 0
+    binding_count: int = 0
+    created_at: datetime
+    updated_at: datetime | None = None
+    latest_version: CapabilityVersionDTO | None = None
+    channels: list[CapabilityChannelDTO] = Field(default_factory=list)
+
+
+class CreateBindingRequest(BaseModel):
+    provider_asset_id: str
+    resolve_mode: Literal["channel", "pinned"] = "channel"
+    #: resolve_mode=channel 时有效，缺省 live。
+    provider_channel: Literal["test", "liversh", "live"] | None = None
+    #: resolve_mode=pinned 时必填。
+    provider_version_id: str | None = None
+    #: 空 = 该 Agent 的所有版本共用这条引用。
+    consumer_version_id: str | None = None
+    tenant_scope: str = "workspace_shared"
+
+
+class CapabilityBindingDTO(BaseModel):
+    id: str
+    consumer_asset_id: str
+    consumer_asset_name: str | None = None
+    consumer_version_id: str | None = None
+    provider_asset_id: str
+    provider_kind: str
+    resolve_mode: str
+    provider_channel: str | None = None
+    provider_version_id: str | None = None
+    resolved_version_id: str | None = None
+    resolved_version_label: str | None = None
+    tenant_scope: str
+    created_at: datetime
+
+
 class CredentialDTO(BaseModel):
     id: str
     name: str
