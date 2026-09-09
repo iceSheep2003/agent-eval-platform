@@ -29,9 +29,19 @@ import backend.app.modules.asset.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.dataset.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.evaluation.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.execution.infrastructure.tables  # noqa: E402,F401
+import backend.app.modules.observability.infrastructure.tables  # noqa: E402,F401
+import backend.app.modules.observability.infrastructure.tables  # noqa: E402,F401
 from backend.app.settings import Settings  # noqa: E402
 
-MODULE_PREFIXES = ("identity", "asset", "dataset", "evaluation", "run", "platform")
+MODULE_PREFIXES = (
+    "identity",
+    "asset",
+    "dataset",
+    "evaluation",
+    "run",
+    "platform",
+    "obs",
+)
 
 
 def _metadata_for(module: str | None) -> MetaData:

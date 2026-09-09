@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from .modules.asset.application.services import AssetService
 from .modules.dataset.application.services import DatasetService
 from .modules.evaluation.application.services import EvaluationService
-from .modules.execution.application.services import ExecutionHandlers, RunService
+from .modules.execution.application.services import ExecutionHandlers, InvokeService, RunService
 from .runtime_adapters.local_sandbox import LocalSandboxRuntime
 from .modules.identity.application.services import IdentityService
 from .modules.identity.domain.authorizer import Authorizer
@@ -35,6 +35,7 @@ class Container:
     datasets: DatasetService
     evaluations: EvaluationService
     runs: RunService
+    invoke: InvokeService
     execution_handlers: ExecutionHandlers
     traces: TraceService
     command_queue: CommandQueue
@@ -60,6 +61,7 @@ class Container:
         runs = RunService(
             database, resolved_clock, assets, datasets, evaluations, evaluations, sandbox
         )
+        invoke = InvokeService(assets, sandbox)
         execution_handlers = ExecutionHandlers(
             database=database,
             clock=resolved_clock,
@@ -88,6 +90,7 @@ class Container:
             datasets=datasets,
             evaluations=evaluations,
             runs=runs,
+            invoke=invoke,
             execution_handlers=execution_handlers,
             traces=traces,
             command_queue=command_queue,

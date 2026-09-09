@@ -13,7 +13,7 @@ from typing import Protocol, runtime_checkable
 
 from typing import Any, Mapping
 
-from ..common import AssetKind, CredentialKind, Id
+from ..common import AssetKind, Channel, CredentialKind, Id
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +72,10 @@ class AssetQueryPort(Protocol):
 
     async def get_version_ref(
         self, version_id: Id, workspace_id: Id
+    ) -> AssetVersionRef | None: ...
+
+    async def version_of_channel(
+        self, asset_id: Id, channel: Channel, workspace_id: Id
     ) -> AssetVersionRef | None: ...
 
 

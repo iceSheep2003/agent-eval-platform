@@ -75,6 +75,8 @@ class CredentialRow(Base, TimestampMixin):
     asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     tenant_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    #: 部署凭证限定的通道；SDK 上报密钥为 NULL。
+    channel: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False, default="default")
     prefix: Mapped[str] = mapped_column(String(8), nullable=False)
     #: sha256；明文只在创建响应里出现一次

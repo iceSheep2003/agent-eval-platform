@@ -31,7 +31,12 @@ class Channel(StrEnum):
     """部署通道。与 `EvaluationStage` 严格区分——前者是环境，后者是评测时机。"""
 
     TEST = "test"
+    #: 影子验证。注意线值就是 `liversh`（历史拼写，已入库/已入 SDK），不是 `liveshadow`；
+    #: 前端与外部集成按这个字面量对齐。改名等于破坏性变更。
     LIVESH = "liversh"
+    #: `LIVESH` 的别名，只为了让"影子"语义在调用处读得出来。**不是新成员**，
+    #: 枚举迭代仍只有三个通道。
+    LIVE_SHADOW = "liversh"
     LIVE = "live"
 
 

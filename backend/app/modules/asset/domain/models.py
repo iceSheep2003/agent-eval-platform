@@ -74,6 +74,8 @@ class Credential:
     tenant_id: Id | None
     kind: CredentialKind
     name: str
+    #: 部署凭证（`evl_`）限定的通道。None = 不限通道（SDK 上报密钥就是 None）。
+    channel: Channel | None
     prefix: str
     secret_hash: str
     last_four: str

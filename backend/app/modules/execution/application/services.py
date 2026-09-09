@@ -26,6 +26,12 @@ from ....contracts.common import (
     Verdict,
 )
 from ....contracts.dataset import SampleReaderPort, SampleRef
+from ....contracts.execution import (
+    ChannelInvocation,
+    InvokeEvent,
+    InvokeResult,
+    TrialRef,
+)
 from ....contracts.errors import DomainError, Errors, NotFound
 from ....contracts.evaluation import (
     GateEvaluatorPort,
@@ -44,7 +50,7 @@ from ..infrastructure.repositories import (
     ScoreRepository,
     TrialRepository,
 )
-from .ports import RunContext, RuntimePort, RuntimeSpec
+from .ports import InvocationContext, RunContext, RuntimePort, RuntimeSpec
 
 RUN_PREPARE = "run.prepare"
 TRIAL_EXECUTE = "trial.execute"
@@ -264,6 +270,25 @@ class RunService:
         if trial is None:
             raise NotFound("Trial", trial_id)
         return trial
+
+    async def get_trial_ref(self, trial_id: Id, workspace_id: Id) -> TrialRef | None:
+        """实现 `contracts.execution.TrialQueryPort`：给回流提供只读投影。"""
+        async with UnitOfWork(self._db) as uow:
+            trial = await TrialRepository(uow.session).get(trial_id, workspace_id)
+        if trial is None:
+            return None
+        return TrialRef(
+            id=trial.id,
+            run_id=trial.run_id,
+            workspace_id=trial.workspace_id,
+            tenant_id=trial.tenant_id,
+            sample_id=trial.sample_id,
+            execution_status=trial.execution_status,
+            verdict=trial.verdict,
+            instruction=trial.instruction,
+            output=trial.output,
+            error=trial.error,
+        )
 
     async def list_scores(self, run_id: Id, workspace_id: Id) -> Sequence[ScoreRecord]:
         await self.get_run(run_id, workspace_id)
@@ -623,3 +648,92 @@ def _dimension_scores(
         if values:
             result[dimension.id] = sum(values) / len(values)
     return result
+
+
+# --------------------------------------------------------------------------- #
+# 按通道调用（portal 消费）
+# --------------------------------------------------------------------------- #
+
+
+class InvokeService:
+    """实现 `contracts.execution.InvokePort`：按通道打当前绑定的版本。
+
+    与评测共用同一个 `RuntimePort`——所以线上调用和离线评测不会各维护一套协议。
+    """
+
+    def __init__(self, assets: AssetQueryPort, runtime: RuntimePort) -> None:
+        self._assets = assets
+        self._runtime = runtime
+
+    async def invoke_channel(self, request: ChannelInvocation) -> InvokeResult:
+        version = await self._assets.version_of_channel(
+            request.asset_id, request.channel, request.workspace_id
+        )
+        if version is None:
+            raise DomainError(
+                Errors.NOT_FOUND,
+                f"Agent {request.asset_id} 的 {request.channel.value} 通道没有绑定版本",
+                channel=request.channel.value,
+            )
+        if not version.entrypoint:
+            raise DomainError(
+                Errors.RUN_SUBJECT_INCOMPLETE,
+                f"版本 {version.version_label} 没有 entrypoint，无法调用",
+            )
+
+        ctx = InvocationContext(
+            workspace_id=request.workspace_id,
+            tenant_id=request.tenant_id,
+            timeout_seconds=request.timeout_seconds,
+            cost_budget_usd=request.cost_budget_usd,
+        )
+        handle = await self._runtime.provision(
+            RuntimeSpec(
+                asset_id=version.asset_id,
+                asset_version_id=version.id,
+                workspace_id=request.workspace_id,
+                entrypoint=version.entrypoint,
+                spec=version.spec,
+            ),
+            ctx,
+        )
+        try:
+            result = await self._runtime.invoke(
+                handle, {"__entrypoint__": version.entrypoint, "input": request.input}, ctx
+            )
+        finally:
+            await self._runtime.teardown(handle)
+
+        return InvokeResult(
+            output=result.output,
+            error=result.error,
+            trace_id=result.trace_id,
+            duration_ms=result.duration_ms,
+            cost_usd=result.cost_usd,
+            version_label=version.version_label,
+        )
+
+    async def stream_channel(self, request: ChannelInvocation):
+        """流式调用。
+
+        本地沙箱的 entrypoint 是普通函数、拿不到增量输出，所以这里**只发一帧**：
+        要么完整结果、要么错误。真正的增量要等 Runtime 支持流式协议，
+        接口形状先定下来，避免以后改调用方。
+        """
+        result = await self.invoke_channel(request)
+        if result.error is not None:
+            yield InvokeEvent(error=result.error, finish_reason="error")
+            return
+        yield InvokeEvent(delta=_as_text(result.output))
+        yield InvokeEvent(finish_reason="stop", usage=None)
+
+
+def _as_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    import json
+
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)

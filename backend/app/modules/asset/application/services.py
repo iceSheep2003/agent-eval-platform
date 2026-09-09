@@ -99,6 +99,16 @@ class AssetService:
             spec=dict(version.spec),
         )
 
+    async def version_of_channel(
+        self, asset_id: str, channel: Channel, workspace_id: str
+    ) -> AssetVersionRef | None:
+        """通道 → 当前绑定的版本。调用方**不能**自己指定版本。"""
+        binding = await self.channel_states(asset_id, workspace_id)
+        version_id = binding[channel].version_id
+        if version_id is None:
+            return None
+        return await self.get_version_ref(version_id, workspace_id)
+
     async def get_asset(self, asset_id: str, workspace_id: str) -> AssetRef | None:
         """实现 `contracts.asset.AssetQueryPort`：只返回投影，不抛错。"""
         async with UnitOfWork(self._db) as uow:
@@ -260,10 +270,15 @@ class AssetService:
         kind: CredentialKind,
         asset_id: str | None = None,
         tenant_id: str | None = None,
+        channel: Channel | None = None,
         name: str = "default",
         expires_at: datetime | None = None,
     ) -> IssuedCredential:
-        """签发机器凭证。SDK 密钥必须绑定到 (agent, tenant)。"""
+        """签发机器凭证。
+
+        - SDK 上报密钥（`evk_`）必须绑定到 `(agent, tenant)`
+        - 部署凭证（`evl_`）可限定通道，调用方不能拿它去打别的通道
+        """
         if asset_id is not None:
             await self.get_agent(asset_id, workspace_id)
         if kind is CredentialKind.TRACE and (asset_id is None or tenant_id is None):
@@ -279,6 +294,7 @@ class AssetService:
             tenant_id=tenant_id,
             kind=kind,
             name=name,
+            channel=channel,
             prefix=_PREFIX[kind],
             secret_hash=hash_secret(raw),
             last_four=last_four(raw),
@@ -305,6 +321,7 @@ class AssetService:
             kind=existing.kind,
             asset_id=existing.asset_id,
             tenant_id=existing.tenant_id,
+            channel=existing.channel,
             name=existing.name,
             expires_at=existing.expires_at,
         )
