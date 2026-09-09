@@ -11,7 +11,7 @@ from typing import Mapping, Sequence
 from pydantic import BaseModel, Field
 
 from ....contracts.identity import MemberRef
-from ..domain.models import Organization, User, Workspace
+from ..domain.models import Invitation, Organization, User, Workspace
 
 
 class LoginRequest(BaseModel):
@@ -63,6 +63,23 @@ class UpdateMemberRoleRequest(BaseModel):
     role: str
 
 
+class InviteRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    role: str = Field(default="member")
+
+
+class InvitationDTO(BaseModel):
+    id: str
+    organization_id: str
+    email: str
+    role: str
+    status: str
+    invited_by: str
+    created_at: str
+    expires_at: str
+    accepted_at: str | None = None
+
+
 class CreateWorkspaceRequest(BaseModel):
     slug: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]*$")
     name: str = Field(min_length=1, max_length=128)
@@ -90,6 +107,20 @@ def organization_dto(
 ) -> OrganizationDTO:
     return OrganizationDTO(
         id=organization.id, slug=organization.slug, name=organization.name, role=role
+    )
+
+
+def invitation_dto(invitation: Invitation) -> InvitationDTO:
+    return InvitationDTO(
+        id=invitation.id,
+        organization_id=invitation.organization_id,
+        email=invitation.email,
+        role=invitation.role.value,
+        status=invitation.status,
+        invited_by=invitation.invited_by,
+        created_at=invitation.created_at.isoformat(),
+        expires_at=invitation.expires_at.isoformat(),
+        accepted_at=invitation.accepted_at.isoformat() if invitation.accepted_at else None,
     )
 
 

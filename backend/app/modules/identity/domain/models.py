@@ -59,6 +59,29 @@ class OrganizationMembership:
 
 
 @dataclass(frozen=True, slots=True)
+class Invitation:
+    """按邮箱邀请加入组织。
+
+    账号已存在 → 立即成为组织成员；账号不存在 → 留 pending，等对方首次登录时自动接受。
+    （平台的账号由自建 IdP 提供，不开放自助注册，所以邀请是唯一的加人入口。）
+    """
+
+    id: Id
+    organization_id: Id
+    email: str
+    role: OrgRole
+    status: Literal["pending", "accepted", "revoked"]
+    invited_by: Id
+    created_at: datetime
+    expires_at: datetime
+    accepted_at: datetime | None = None
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == "pending"
+
+
+@dataclass(frozen=True, slots=True)
 class Workspace:
     """项目：评测资产的隔离单位（对齐 Langfuse 的 Project）。"""
 

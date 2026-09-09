@@ -117,6 +117,85 @@ async def _scenario(tmp_path) -> None:
         # 移除成员
         await identity.remove_workspace_member(workspace.id, demo_id)
         assert not await identity.is_member(demo_id, workspace.id)
+
+        # --- 邀请 ---------------------------------------------------------
+        from backend.app.modules.identity.domain.models import User
+        from backend.app.modules.identity.infrastructure.repositories import UserRepository
+        from backend.app.modules.identity.infrastructure.security import hash_password
+        from backend.app.persistence import UnitOfWork
+        from backend.app.shared.ids import new_id
+
+        async def create_user(username: str, email: str, password: str) -> None:
+            async with UnitOfWork(container.database) as uow:
+                UserRepository(uow.session).add(
+                    User(
+                        id=new_id("user"),
+                        username=username,
+                        display_name=username,
+                        email=email,
+                        password_hash=hash_password(password),
+                        status="active",
+                        created_at=clock.now(),
+                    )
+                )
+                await uow.commit()
+
+        # 账号不存在：留 pending
+        pending = await identity.invite_to_organization(
+            organization_id=organization.id,
+            email="newcomer@eval-loom.local",
+            role=OrgRole.MEMBER,
+            invited_by=admin_id,
+        )
+        assert pending.status == "pending"
+
+        # 同一邮箱重复邀请被拒
+        with pytest.raises(DomainError):
+            await identity.invite_to_organization(
+                organization_id=organization.id,
+                email="newcomer@eval-loom.local",
+                role=OrgRole.MEMBER,
+                invited_by=admin_id,
+            )
+
+        # 对方首次登录 → 自动接受
+        await create_user("newcomer", "newcomer@eval-loom.local", "newcomer123")
+        newcomer, _ = await identity.login_local("newcomer", "newcomer123")
+        assert await identity.org_role_of(organization.id, newcomer.id) is OrgRole.MEMBER
+        statuses = {item.email: item.status for item in await identity.list_invitations(organization.id)}
+        assert statuses["newcomer@eval-loom.local"] == "accepted"
+
+        # 账号已存在：邀请即加入
+        await create_user("second", "second@eval-loom.local", "second123")
+        immediate = await identity.invite_to_organization(
+            organization_id=organization.id,
+            email="second@eval-loom.local",
+            role=OrgRole.ADMIN,
+            invited_by=admin_id,
+        )
+        assert immediate.status == "accepted"
+        second, _ = await identity.login_local("second", "second123")
+        assert await identity.org_role_of(organization.id, second.id) is OrgRole.ADMIN
+
+        # 已是成员再邀请被拒
+        with pytest.raises(DomainError):
+            await identity.invite_to_organization(
+                organization_id=organization.id,
+                email="second@eval-loom.local",
+                role=OrgRole.VIEWER,
+                invited_by=admin_id,
+            )
+
+        # 撤销邀请
+        revoked = await identity.invite_to_organization(
+            organization_id=organization.id,
+            email="nobody@eval-loom.local",
+            role=OrgRole.VIEWER,
+            invited_by=admin_id,
+        )
+        await identity.revoke_invitation(revoked.id)
+        statuses = {item.id: item.status for item in await identity.list_invitations(organization.id)}
+        assert statuses[revoked.id] == "revoked"
     finally:
         await container.shutdown()
 

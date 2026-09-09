@@ -28,6 +28,7 @@ PREFIXES: dict[str, str] = {
     "session": "ses",
     "membership": "mem",
     "tenant": "tn",
+    "invitation": "inv",
     "identity_provider": "idp",
     "federated_identity": "fed",
     # asset

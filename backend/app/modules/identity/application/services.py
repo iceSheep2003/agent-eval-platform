@@ -17,6 +17,7 @@ from ....persistence import Database, UnitOfWork
 from ....shared.clock import Clock
 from ....shared.ids import new_id
 from ..domain.models import (
+    Invitation,
     Membership,
     Organization,
     OrganizationMembership,
@@ -27,6 +28,7 @@ from ..domain.models import (
 )
 from ..domain.authorizer import Authorizer
 from ..infrastructure.repositories import (
+    InvitationRepository,
     MembershipRepository,
     OrganizationMembershipRepository,
     OrganizationRepository,
@@ -94,6 +96,7 @@ class IdentityService:
                 )
             )
             await uow.commit()
+        await self.accept_pending_invitations(user)
         return user, raw_token
 
     async def resolve(
@@ -295,6 +298,102 @@ class IdentityService:
             )
             await uow.commit()
         return workspace
+
+    # -- 邀请 ----------------------------------------------------------------
+
+    #: 邀请链接/记录的有效期
+    INVITATION_TTL_DAYS = 14
+
+    async def invite_to_organization(
+        self, *, organization_id: Id, email: str, role: OrgRole, invited_by: Id
+    ) -> Invitation:
+        """按邮箱邀请。账号已存在就**立即**加入；否则留 pending 等首次登录时接受。"""
+        normalized = email.strip().lower()
+        if not normalized or "@" not in normalized:
+            raise DomainError(Errors.VALIDATION_FAILED, "请填写合法邮箱")
+
+        async with UnitOfWork(self._db) as uow:
+            users = UserRepository(uow.session)
+            existing_user = await users.find_by_identifier(normalized)
+            memberships = OrganizationMembershipRepository(uow.session)
+            if existing_user is not None and await memberships.get(
+                organization_id, existing_user.id
+            ):
+                raise DomainError(Errors.VALIDATION_FAILED, f"{normalized} 已经是组织成员")
+
+            invitations = InvitationRepository(uow.session)
+            if await invitations.find_pending(organization_id, normalized) is not None:
+                raise DomainError(Errors.VALIDATION_FAILED, f"{normalized} 已有待接受的邀请")
+
+            now = self._clock.now()
+            # 已有账号时邀请当场生效——返回值必须与落库状态一致，否则调用方看到的是 pending
+            auto_accepted = existing_user is not None
+            invitation = Invitation(
+                id=new_id("invitation"),
+                organization_id=organization_id,
+                email=normalized,
+                role=role,
+                status="accepted" if auto_accepted else "pending",
+                invited_by=invited_by,
+                created_at=now,
+                expires_at=now + timedelta(days=self.INVITATION_TTL_DAYS),
+                accepted_at=now if auto_accepted else None,
+            )
+            invitations.add(invitation)
+
+            if existing_user is not None:
+                memberships.add(
+                    OrganizationMembership(
+                        organization_id=organization_id,
+                        user_id=existing_user.id,
+                        role=role,
+                        created_at=now,
+                    )
+                )
+            await uow.commit()
+        return invitation
+
+    async def list_invitations(self, organization_id: Id) -> Sequence[Invitation]:
+        async with UnitOfWork(self._db) as uow:
+            return list(
+                await InvitationRepository(uow.session).list_for_organization(organization_id)
+            )
+
+    async def revoke_invitation(self, invitation_id: Id) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await InvitationRepository(uow.session).revoke(invitation_id)
+            await uow.commit()
+
+    async def accept_pending_invitations(self, user: User) -> int:
+        """登录后自动接受匹配自己邮箱的待处理邀请。
+
+        平台不开放自助注册（账号由自建 IdP 提供），所以「登录即接受」是邀请唯一的落地方式。
+        """
+        if not user.email:
+            return 0
+        now = self._clock.now()
+        accepted = 0
+        async with UnitOfWork(self._db) as uow:
+            invitations = InvitationRepository(uow.session)
+            pending = await invitations.list_pending_for_email(user.email.lower())
+            memberships = OrganizationMembershipRepository(uow.session)
+            for invitation in pending:
+                if invitation.expires_at < now:
+                    continue
+                if await memberships.get(invitation.organization_id, user.id) is None:
+                    memberships.add(
+                        OrganizationMembership(
+                            organization_id=invitation.organization_id,
+                            user_id=user.id,
+                            role=invitation.role,
+                            created_at=now,
+                        )
+                    )
+                await invitations.mark_accepted(invitation.id, now)
+                accepted += 1
+            if accepted:
+                await uow.commit()
+        return accepted
 
     # -- 工作区成员（实现 contracts.identity.MembershipQueryPort）---------------
 

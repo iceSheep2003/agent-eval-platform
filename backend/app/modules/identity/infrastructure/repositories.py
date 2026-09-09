@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ....contracts.common import OrgRole, WorkspaceRole
 from ....shared.clock import ensure_aware
 from ..domain.models import (
+    Invitation,
     Membership,
     Organization,
     OrganizationMembership,
@@ -25,6 +26,7 @@ from ..domain.models import (
     Workspace,
 )
 from .tables import (
+    InvitationRow,
     MembershipRow,
     OrganizationMembershipRow,
     OrganizationRow,
@@ -84,6 +86,20 @@ def _org_membership(row: OrganizationMembershipRow) -> OrganizationMembership:
         user_id=row.user_id,
         role=OrgRole(row.role),
         created_at=ensure_aware(row.created_at),
+    )
+
+
+def _invitation(row: InvitationRow) -> Invitation:
+    return Invitation(
+        id=row.id,
+        organization_id=row.organization_id,
+        email=row.email,
+        role=OrgRole(row.role),
+        status=row.status,  # type: ignore[arg-type]
+        invited_by=row.invited_by,
+        created_at=ensure_aware(row.created_at),
+        expires_at=ensure_aware(row.expires_at),
+        accepted_at=ensure_aware(row.accepted_at) if row.accepted_at else None,
     )
 
 
@@ -423,4 +439,68 @@ class OrganizationMembershipRepository:
                 OrganizationMembershipRow.organization_id == organization_id,
                 OrganizationMembershipRow.user_id == user_id,
             )
+        )
+
+
+class InvitationRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, invitation_id: str) -> Invitation | None:
+        row = await self._session.get(InvitationRow, invitation_id)
+        return _invitation(row) if row else None
+
+    async def find_pending(
+        self, organization_id: str, email: str
+    ) -> Invitation | None:
+        stmt = select(InvitationRow).where(
+            InvitationRow.organization_id == organization_id,
+            InvitationRow.email == email,
+            InvitationRow.status == "pending",
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _invitation(row) if row else None
+
+    async def list_pending_for_email(self, email: str) -> Sequence[Invitation]:
+        """某人登录时用邮箱找出所有待接受的邀请。"""
+        stmt = select(InvitationRow).where(
+            InvitationRow.email == email, InvitationRow.status == "pending"
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_invitation(row) for row in rows]
+
+    async def list_for_organization(self, organization_id: str) -> Sequence[Invitation]:
+        stmt = (
+            select(InvitationRow)
+            .where(InvitationRow.organization_id == organization_id)
+            .order_by(InvitationRow.created_at.desc())
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_invitation(row) for row in rows]
+
+    def add(self, invitation: Invitation) -> None:
+        self._session.add(
+            InvitationRow(
+                id=invitation.id,
+                organization_id=invitation.organization_id,
+                email=invitation.email,
+                role=invitation.role.value,
+                status=invitation.status,
+                invited_by=invitation.invited_by,
+                expires_at=invitation.expires_at,
+            )
+        )
+
+    async def mark_accepted(self, invitation_id: str, now: datetime) -> None:
+        await self._session.execute(
+            update(InvitationRow)
+            .where(InvitationRow.id == invitation_id)
+            .values(status="accepted", accepted_at=now)
+        )
+
+    async def revoke(self, invitation_id: str) -> None:
+        await self._session.execute(
+            update(InvitationRow)
+            .where(InvitationRow.id == invitation_id)
+            .values(status="revoked")
         )

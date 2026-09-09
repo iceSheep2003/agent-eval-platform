@@ -25,6 +25,8 @@ from ....schemas.response import list_response, ok
 from ..application.services import IdentityService
 from .schemas import (
     AddMemberRequest,
+    InviteRequest,
+    invitation_dto,
     CreateWorkspaceRequest,
     LoginRequest,
     UpdateMemberRoleRequest,
@@ -221,6 +223,47 @@ async def remove_org_member(
     await _require_org_admin(identity, actor, organization_id)
     await identity.remove_org_member(organization_id, user_id)
     return ok({"organization_id": organization_id, "user_id": user_id})
+
+
+@workspace_router.get("/organizations/{organization_id}/invitations")
+async def list_invitations(
+    organization_id: str,
+    actor: Actor,
+    identity: Annotated[IdentityService, Depends(get_identity)],
+) -> dict:
+    await _require_org_admin(identity, actor, organization_id)
+    items = await identity.list_invitations(organization_id)
+    return list_response([invitation_dto(item).model_dump() for item in items])
+
+
+@workspace_router.post("/organizations/{organization_id}/invitations")
+async def invite_to_organization(
+    organization_id: str,
+    payload: InviteRequest,
+    actor: Actor,
+    identity: Annotated[IdentityService, Depends(get_identity)],
+) -> dict:
+    """按邮箱邀请。账号已存在立即加入；否则等对方首次登录时自动接受。"""
+    await _require_org_admin(identity, actor, organization_id)
+    invitation = await identity.invite_to_organization(
+        organization_id=organization_id,
+        email=payload.email,
+        role=OrgRole(payload.role),
+        invited_by=actor.user_id,
+    )
+    return ok(invitation_dto(invitation).model_dump())
+
+
+@workspace_router.delete("/organizations/{organization_id}/invitations/{invitation_id}")
+async def revoke_invitation(
+    organization_id: str,
+    invitation_id: str,
+    actor: Actor,
+    identity: Annotated[IdentityService, Depends(get_identity)],
+) -> dict:
+    await _require_org_admin(identity, actor, organization_id)
+    await identity.revoke_invitation(invitation_id)
+    return ok({"invitation_id": invitation_id})
 
 
 @workspace_router.post("/workspaces")
