@@ -124,6 +124,8 @@ async def _scenario(tmp_path) -> None:
         agent = await assets.register_agent(
             workspace_id=workspace_id, owner_id=owner_id, name="support-agent"
         )
+        agent_versions = await assets.list_versions(agent.id, workspace_id)
+        agent_version_id = agent_versions[0].id
         # Agent 不是能力资产
         with pytest.raises(NotFound):
             await assets.get_capability(agent.id, workspace_id)
@@ -137,10 +139,9 @@ async def _scenario(tmp_path) -> None:
         )
         assert binding.resolve_mode == "channel"
         assert binding.target_channel() is Channel.LIVE
-        assert await assets.resolve_bindings(agent.id, workspace_id) == {}
+        assert await assets.resolve_bindings(agent_version_id, workspace_id) == {}
 
         # LIVE 绑上 v2 → 引用自动解析到 v2（不必重冻 Agent）
-        agent_versions = await assets.list_versions(agent.id, workspace_id)
         await assets.bind_channel(
             asset_id=skill.id,
             channel=Channel.LIVE,
@@ -148,7 +149,7 @@ async def _scenario(tmp_path) -> None:
             workspace_id=workspace_id,
             actor_id=owner_id,
         )
-        resolved = await assets.resolve_bindings(agent.id, workspace_id)
+        resolved = await assets.resolve_bindings(agent_version_id, workspace_id)
         assert resolved == {skill.id: v2.id}
 
         # pinned 模式锁死 v1
@@ -162,15 +163,15 @@ async def _scenario(tmp_path) -> None:
         )
         assert pinned.provider_channel is None
         mcp_v1 = (await assets.list_versions(mcp.id, workspace_id))[0]
-        resolved = await assets.resolve_bindings(agent.id, workspace_id)
+        resolved = await assets.resolve_bindings(agent_version_id, workspace_id)
         assert resolved == {skill.id: v2.id, mcp.id: mcp_v1.id}
 
         # 绑定覆盖（N4 的 A/B 入口）：只影响本次解析，不改绑定
         resolved = await assets.resolve_bindings(
-            agent.id, workspace_id, overrides={skill.id: versions[0].id}
+            agent_version_id, workspace_id, overrides={skill.id: versions[0].id}
         )
         assert resolved[skill.id] == versions[0].id
-        assert (await assets.resolve_bindings(agent.id, workspace_id))[skill.id] == v2.id
+        assert (await assets.resolve_bindings(agent_version_id, workspace_id))[skill.id] == v2.id
 
         # 版本级绑定优先于 Agent 级绑定
         await assets.bind_capability(
@@ -178,11 +179,11 @@ async def _scenario(tmp_path) -> None:
             actor_id=owner_id,
             consumer_asset_id=agent.id,
             provider_asset_id=skill.id,
-            consumer_version_id=agent_versions[0].id,
+            consumer_version_id=agent_version_id,
             resolve_mode="pinned",
             provider_version_id=versions[0].id,
         )
-        assert (await assets.resolve_bindings(agent.id, workspace_id))[skill.id] == versions[0].id
+        assert (await assets.resolve_bindings(agent_version_id, workspace_id))[skill.id] == versions[0].id
 
         # 影响面：谁在引用这个 Skill
         impact = await assets.list_bindings_of_provider(skill.id, workspace_id)

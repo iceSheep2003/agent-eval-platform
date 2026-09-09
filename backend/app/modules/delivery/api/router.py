@@ -28,14 +28,14 @@ PROMOTE_PERMISSION = {
 class PromoteRequest(BaseModel):
     asset_id: str
     version_id: str
-    to_channel: Literal["liversh", "live"]
+    to_channel: Literal["livesh", "live"]
     run_id: str | None = None
     #: 高风险动作的二次确认占位。真正的 re-auth ticket 见架构文档 §5.1.5。
     confirm: bool = False
 
 
 class RollbackRequest(BaseModel):
-    channel: Literal["test", "liversh", "live"]
+    channel: Literal["test", "livesh", "live"]
     to_version_id: str
     reason: str = Field(min_length=1, max_length=512)
     confirm: bool = False

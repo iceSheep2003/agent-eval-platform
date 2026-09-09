@@ -66,6 +66,9 @@ def _span(row: SpanRow) -> SpanRecord:
         attributes=dict(row.attributes or {}),
         error_type=row.error_type,
         error_message=row.error_message,
+        resource_asset_id=row.resource_asset_id,
+        resource_version_id=row.resource_version_id,
+        resource_attribution=row.resource_attribution,
     )
 
 
@@ -249,6 +252,9 @@ class TraceRepository:
             attributes=dict(span.attributes),
             error_type=span.error_type,
             error_message=span.error_message,
+            resource_asset_id=span.resource_asset_id,
+            resource_version_id=span.resource_version_id,
+            resource_attribution=span.resource_attribution,
         )
 
     def add(self, trace: TraceRecord, spans: Sequence[SpanRecord]) -> None:
@@ -303,6 +309,70 @@ class TraceRepository:
             int(row[2] or 0),
             Decimal(str(row[3] or 0)),
         )
+
+    async def resource_version_spans(
+        self,
+        workspace_id: str,
+        resource_version_id: str,
+        since: datetime,
+    ) -> Sequence[SpanRecord]:
+        """某个能力资产版本被调用的 Span。归因写在 Span 上，所以这里直接查 Span 表。"""
+        stmt = (
+            select(SpanRow)
+            .where(
+                SpanRow.workspace_id == workspace_id,
+                SpanRow.resource_version_id == resource_version_id,
+                SpanRow.started_at >= since,
+            )
+            .order_by(SpanRow.started_at.desc())
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_span(row) for row in rows]
+
+    async def attribution_coverage(
+        self,
+        workspace_id: str,
+        resource_asset_id: str,
+        consumer_asset_ids: Sequence[str],
+        span_kind: str,
+        since: datetime,
+    ) -> tuple[int, int]:
+        """返回 (已归因到该资源的 Span 数, 本应归因的候选 Span 数)。
+
+        分母只算**引用该资源的 Agent** 产生的同类 Span——拿全工作区做分母没有意义。
+        """
+        if not consumer_asset_ids:
+            return (0, 0)
+        base = (
+            SpanRow.workspace_id == workspace_id,
+            SpanRow.kind == span_kind,
+            SpanRow.started_at >= since,
+            SpanRow.trace_id.in_(
+                select(TraceRow.id).where(
+                    TraceRow.workspace_id == workspace_id,
+                    TraceRow.asset_id.in_(list(consumer_asset_ids)),
+                )
+            ),
+        )
+        total = int(
+            (
+                await self._session.execute(
+                    select(func.count()).select_from(SpanRow).where(*base)
+                )
+            ).scalar_one()
+            or 0
+        )
+        attributed = int(
+            (
+                await self._session.execute(
+                    select(func.count())
+                    .select_from(SpanRow)
+                    .where(*base, SpanRow.resource_asset_id == resource_asset_id)
+                )
+            ).scalar_one()
+            or 0
+        )
+        return (attributed, total)
 
     async def durations(self, workspace_id: str, asset_id: str, since: datetime) -> Sequence[int]:
         stmt = select(TraceRow.started_at, TraceRow.ended_at).where(

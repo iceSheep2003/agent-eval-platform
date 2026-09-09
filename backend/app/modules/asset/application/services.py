@@ -10,7 +10,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 
-from ....contracts.asset import AssetRef, AssetVersionRef, CredentialContext
+from ....contracts.asset import (
+    AssetRef,
+    AssetVersionRef,
+    CapabilityAttributionRef,
+    CredentialContext,
+)
 from ....contracts.common import AssetKind, Channel, CredentialKind, VersionLifecycle
 from ....contracts.errors import DomainError, Errors, NotFound
 from ....contracts.identity import TenantProvisioningPort
@@ -21,6 +26,7 @@ from ....shared.ids import new_id
 from ....shared.secrets import hash_secret, last_four, new_secret
 from ..domain import spec as spec_registry
 from ..domain.models import (
+    Artifact,
     Asset,
     AssetBinding,
     AssetVersion,
@@ -202,6 +208,11 @@ class AssetService:
             )
             for channel in Channel
         }
+
+    async def list_artifacts(self, asset_id: str, workspace_id: str) -> Sequence[Artifact]:
+        await self.get_agent(asset_id, workspace_id)
+        async with UnitOfWork(self._db) as uow:
+            return list(await ArtifactRepository(uow.session).list_for_asset(asset_id))
 
     async def list_credentials(self, workspace_id: str) -> Sequence[Credential]:
         async with UnitOfWork(self._db) as uow:
@@ -566,18 +577,22 @@ class AssetService:
         bindings = await self.list_bindings_of_consumer(
             version.asset_id, workspace_id, consumer_version_id
         )
-        # 版本级绑定优先于 Agent 级绑定。
+        # 版本级绑定优先于 Agent 级绑定：先处理版本级，先到先得，后者不覆盖。
         ordered = sorted(bindings, key=lambda item: item.consumer_version_id is None)
+        declared = {binding.provider_asset_id for binding in bindings}
 
         resolved: dict[str, str] = {}
         for binding in ordered:
-            override = (overrides or {}).get(binding.provider_asset_id)
-            if override is not None:
-                resolved[binding.provider_asset_id] = override
+            if binding.provider_asset_id in resolved:
                 continue
             version_id = await self._resolve_one(binding, workspace_id)
             if version_id is not None:
                 resolved[binding.provider_asset_id] = version_id
+
+        # 覆盖只对**已声明**的引用生效：不能靠 override 引用一个 Agent 没绑定的资源。
+        for provider_asset_id, version_id in (overrides or {}).items():
+            if provider_asset_id in declared:
+                resolved[provider_asset_id] = version_id
         return resolved
 
     async def resolve_binding_version(
@@ -594,6 +609,73 @@ class AssetService:
             return None
         version = await self.version_of_channel(binding.provider_asset_id, channel, workspace_id)
         return version.id if version is not None else None
+
+    async def attribution_targets(
+        self, *, workspace_id: str, asset_id: str, version_id: str | None = None
+    ) -> Sequence[CapabilityAttributionRef]:
+        """实现 `contracts.asset.AttributionTargetPort`：给 ingest 提供归因候选。
+
+        `version_id` 为空 = SDK 上报的生产 Trace，回退到该资产的 LIVE 版本。
+        回退也解析不出引用时返回空列表——**归因不上就不归因**，不猜。
+        """
+        resolved_version_id = version_id
+        if resolved_version_id is None:
+            live = await self.version_of_channel(asset_id, Channel.LIVE, workspace_id)
+            if live is None:
+                return ()
+            resolved_version_id = live.id
+
+        bindings = await self.list_bindings_of_consumer(asset_id, workspace_id, resolved_version_id)
+        targets: list[CapabilityAttributionRef] = []
+        seen: set[str] = set()
+        for binding in bindings:
+            if binding.provider_asset_id in seen:
+                continue
+            seen.add(binding.provider_asset_id)
+            provider_version_id = await self._resolve_one(binding, workspace_id)
+            if provider_version_id is None:
+                continue
+            ref = await self.get_version_ref(provider_version_id, workspace_id)
+            if ref is None:
+                continue
+            names = await self._attribution_names(binding, ref.spec, workspace_id)
+            if not names:
+                continue
+            targets.append(
+                CapabilityAttributionRef(
+                    asset_id=binding.provider_asset_id,
+                    version_id=provider_version_id,
+                    kind=binding.provider_kind,
+                    names=frozenset(names),
+                )
+            )
+        return targets
+
+    async def consumers_of_resource(
+        self, *, workspace_id: str, resource_asset_id: str
+    ) -> Sequence[str]:
+        """实现 `contracts.asset.AttributionTargetPort`：谁引用了这个能力资产。"""
+        bindings = await self.list_bindings_of_provider(resource_asset_id, workspace_id)
+        return tuple(dict.fromkeys(binding.consumer_asset_id for binding in bindings))
+
+    async def _attribution_names(
+        self, binding: AssetBinding, spec: Mapping[str, Any], workspace_id: str
+    ) -> set[str]:
+        """按 kind 取「能在 Span 上认出来的标识」。取不到就说明这类资源还归不了因。"""
+        if binding.provider_kind is AssetKind.MCP:
+            tools = spec.get("tools") or []
+            return {
+                str(tool.get("name"))
+                for tool in tools
+                if isinstance(tool, Mapping) and tool.get("name")
+            }
+        if binding.provider_kind is AssetKind.KNOWLEDGE_BASE:
+            index_name = spec.get("index_name")
+            return {str(index_name)} if index_name else set()
+        if binding.provider_kind is AssetKind.SKILL:
+            provider = await self.get_asset_or_404(binding.provider_asset_id, workspace_id)
+            return {provider.name}
+        return set()
 
     async def resolve_credential(self, raw_key: str) -> CredentialContext | None:
         """上报/调用时用密钥换上下文。**asset_id / tenant_id 只认这里的结果。**"""

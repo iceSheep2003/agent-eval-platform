@@ -30,7 +30,16 @@ TABLE_OPS = (
     "create_check_constraint",
 )
 
-_CALL = re.compile(r"op\.(" + "|".join(TABLE_OPS) + r")\(\s*[\"']([a-z_]+)[\"']")
+#: `batch_op.add_column('x')` 的第一个参数是**列名**，不是表名——表名在 `batch_alter_table`
+#: 上。所以用 `(?<!batch_)` 排除掉，表名改由 `_BATCH` 单独校验。
+_CALL = re.compile(r"(?<!batch_)op\.(" + "|".join(TABLE_OPS) + r")\(\s*[\"']([a-z_]+)[\"']")
+
+#: batch_alter_table('table_name', ...) —— 批处理块的目标表。
+_BATCH = re.compile(r"batch_alter_table\(\s*[\"']([a-z_]+)[\"']")
+
+
+def _table_names(source: str) -> list[str]:
+    return [table for _, table in _CALL.findall(source)] + _BATCH.findall(source)
 
 
 def _migrations() -> list[Path]:
@@ -38,27 +47,37 @@ def _migrations() -> list[Path]:
 
 
 def _branch_labels(path: Path) -> tuple[str, ...]:
+    """读 `branch_labels`。后续迁移写 `branch_labels = None`（合法），返回空元组。"""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in tree.body:
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id == "branch_labels":
-                    return tuple(ast.literal_eval(node.value))
+                    value = ast.literal_eval(node.value)
+                    return tuple(value) if value else ()
     return ()
+
+
+def _module_of(path: Path) -> str:
+    """迁移属于哪个模块。
+
+    分支**根**迁移用 `branch_labels` 声明（Alembic 要求一个分支名只能用一次），
+    后续迁移 `branch_labels = None`，模块名从文件名前缀取——
+    `test_migration_revisions_are_module_prefixed` 保证了两者一致。
+    """
+    labels = _branch_labels(path)
+    assert len(labels) <= 1, f"{path.name} 只应属于一个模块，收到 {labels}"
+    if labels:
+        return labels[0]
+    return path.name.split("_", 1)[0]
 
 
 @pytest.mark.parametrize("path", _migrations(), ids=lambda path: path.name)
 def test_migration_touches_only_own_module_tables(path: Path) -> None:
-    labels = _branch_labels(path)
-    assert labels, f"{path.name} 必须声明 branch_labels（模块名）"
-    assert len(labels) == 1, f"{path.name} 只应属于一个模块，收到 {labels}"
-
-    module = labels[0]
+    module = _module_of(path)
     source = path.read_text(encoding="utf-8")
     offenders = [
-        f"{op}({table!r})"
-        for op, table in _CALL.findall(source)
-        if not table.startswith(f"{module}_")
+        table for table in _table_names(source) if not table.startswith(f"{module}_")
     ]
     assert not offenders, (
         f"{path.name} 属于模块 {module}，却操作了其他模块的表：{offenders}。\n"
@@ -74,8 +93,6 @@ def test_every_module_has_a_baseline() -> None:
 
 def test_migration_revisions_are_module_prefixed() -> None:
     for path in _migrations():
-        labels = _branch_labels(path)
-        if labels:
-            assert path.name.startswith(f"{labels[0]}_"), (
-                f"{path.name} 的文件名应以模块名开头，便于按模块检索"
-            )
+        assert path.name.startswith(f"{_module_of(path)}_"), (
+            f"{path.name} 的文件名应以模块名开头，便于按模块检索"
+        )

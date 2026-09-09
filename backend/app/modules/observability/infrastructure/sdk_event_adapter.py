@@ -232,17 +232,20 @@ class SdkEventAdapter:
         started_at = explicit_start or earliest or now
         if ended_at is None:
             ended_at = latest
+        root = next(
+            (
+                span
+                for span in spans
+                if span.parent_span_id is None and span.kind is SpanKind.AGENT
+            ),
+            None,
+        )
         if not name:
             # 根 agent span 的名字比一串 uuid 有用得多
-            root = next(
-                (
-                    span
-                    for span in spans
-                    if span.parent_span_id is None and span.kind is SpanKind.AGENT
-                ),
-                None,
-            )
             name = root.name if root else external_trace_id
+        # trace 的输入取根 span 的输入——SDK 不单独发 trace 级 input，
+        # 不取的话列表和详情里「输入」永远是空的
+        trace_input = root.input if root is not None else None
         # 兜底修正：极端情况下（时钟回拨、乱序）保证 ended_at 不早于 started_at
         if ended_at is not None and ended_at < started_at:
             ended_at = started_at
@@ -262,7 +265,7 @@ class SdkEventAdapter:
             status=status,  # type: ignore[arg-type]
             started_at=started_at,
             ended_at=ended_at,
-            input=None,
+            input=trace_input,
             output=redact(output),
             usage=usage,
             span_count=len(spans),

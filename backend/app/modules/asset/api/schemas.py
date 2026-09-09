@@ -19,6 +19,18 @@ class RegisterAgentRequest(BaseModel):
     source: dict[str, Any] | None = None
 
 
+class CreateCredentialRequest(BaseModel):
+    """`POST /api/agent-credentials`。`kind` 决定前缀：evk_ / evl_ / evs_。"""
+
+    name: str = Field(default="default", max_length=128)
+    kind: Literal["evk", "evl", "evs"] = "evk"
+    agent_id: str | None = None
+    channel: Literal["test", "livesh", "live"] | None = None
+    scopes: list[str] = Field(default_factory=list)
+    environment: str | None = None
+    expires_at: datetime | None = None
+
+
 class CreateVersionRequest(BaseModel):
     spec: dict = Field(default_factory=dict)
     version_label: str | None = Field(default=None, max_length=32)
@@ -140,7 +152,7 @@ class CreateBindingRequest(BaseModel):
     provider_asset_id: str
     resolve_mode: Literal["channel", "pinned"] = "channel"
     #: resolve_mode=channel 时有效，缺省 live。
-    provider_channel: Literal["test", "liversh", "live"] | None = None
+    provider_channel: Literal["test", "livesh", "live"] | None = None
     #: resolve_mode=pinned 时必填。
     provider_version_id: str | None = None
     #: 空 = 该 Agent 的所有版本共用这条引用。
@@ -172,8 +184,13 @@ class CredentialDTO(BaseModel):
     kind: str
     agent_id: str | None
     tenant_id: str | None
-    status: str
+    #: 凭证限定的通道（部署凭证才有）；SDK 上报密钥为 None
+    channel: str | None = None
+    #: 前端凭证表用 `scopes` / `environment` / `agent_ids` 表达「能干什么、属于哪个环境、被谁用」
+    scopes: list[str] = []
+    agent_ids: list[str] = []
     environment: str | None = None
+    status: str
     expires_at: datetime | None
     last_used_at: datetime | None
     created_at: datetime

@@ -24,6 +24,10 @@ class RunRow(Base, TimestampMixin):
     dataset_version_id: Mapped[str] = mapped_column(String(64), nullable=False)
     #: 冻结的策略快照；策略后续改动不影响历史 Run
     template_snapshot: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    #: 冻结的引用快照：provider_asset_id → provider_version_id
+    binding_snapshot: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    #: 仅本次 Run 生效的引用覆盖（A/B），留档
+    binding_overrides: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
     tenant_scope: Mapped[Any] = mapped_column(JSON, nullable=False, default="all")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued", index=True)
     stage: Mapped[str] = mapped_column(String(16), nullable=False, default="provisioning")

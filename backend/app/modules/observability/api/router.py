@@ -9,11 +9,16 @@ from fastapi import APIRouter, Depends, Query
 from ....api.deps import Actor, assert_permission, get_container
 from ....container import Container
 from ....contracts.common import TraceOrigin
-from ....contracts.errors import PermissionDenied
+from ....contracts.errors import NotFound, PermissionDenied
 from ....contracts.identity import Permission, ResourceRef
 from ....schemas.response import list_response, ok
 from ..application.services import TraceQuery, TraceService
-from .schemas import metrics_dto, trace_dto, trace_summary_dto
+from .schemas import (
+    metrics_dto,
+    resource_metrics_dto,
+    trace_dto,
+    trace_summary_dto,
+)
 
 router = APIRouter(tags=["observability"])
 
@@ -108,6 +113,43 @@ async def agent_metrics(
         tenant_ids=_visible_tenants(container, actor),
     )
     return ok(metrics_dto(metrics).model_dump())
+
+
+@router.get("/assets/{asset_id}/versions/{version_id}/metrics")
+async def resource_metrics(
+    asset_id: str,
+    version_id: str,
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    service: Annotated[TraceService, Depends(get_trace_service)],
+    window_hours: Annotated[int, Query(ge=1, le=24 * 30)] = 24,
+) -> dict:
+    """能力资产版本的用量与质量（N3）。
+
+    放在 observability 而不是 asset：指标是 Trace/Span 的产物，
+    让 asset 去查 obs 的表会破坏表所有权。
+    """
+    assert_permission(
+        container,
+        actor,
+        Permission.METRICS_READ,
+        ResourceRef(kind="asset", id=asset_id, workspace_id=actor.workspace_id),
+    )
+    asset = await container.assets.get_asset(asset_id, actor.workspace_id)
+    if asset is None:
+        raise NotFound("资产", asset_id)
+    consumers = await container.assets.consumers_of_resource(
+        workspace_id=actor.workspace_id, resource_asset_id=asset_id
+    )
+    metrics = await service.resource_metrics(
+        workspace_id=actor.workspace_id,
+        resource_asset_id=asset_id,
+        resource_version_id=version_id,
+        kind=asset.kind.value,
+        window_hours=window_hours,
+        consumer_asset_ids=consumers,
+    )
+    return ok(resource_metrics_dto(metrics).model_dump())
 
 
 __all__ = ["PermissionDenied", "router"]

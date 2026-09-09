@@ -14,7 +14,13 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel
 
-from ..domain.models import AgentMetrics, SpanNode, SpanRecord, TraceRecord
+from ..domain.models import (
+    AgentMetrics,
+    ResourceMetrics,
+    SpanNode,
+    SpanRecord,
+    TraceRecord,
+)
 
 
 def _as_text(value: Any) -> str:
@@ -143,6 +149,41 @@ def trace_summary_dto(trace: TraceRecord) -> TraceSummaryDTO:
         cost=float(trace.usage.cost.amount),
         span_count=trace.span_count,
         tenant_id=trace.tenant_id,
+    )
+
+
+class ResourceMetricsDTO(BaseModel):
+    """能力资产版本的使用质量。`success_metric` 说明 `success_rate` 的口径。"""
+
+    asset_id: str
+    version_id: str
+    window_hours: int
+    kind: str
+    invocations: int
+    error_count: int
+    error_rate: float
+    p95_latency_ms: int | None
+    cost_usd: float
+    success_metric: str | None
+    success_rate: float | None
+    attribution_coverage: float | None
+
+
+def resource_metrics_dto(metrics: ResourceMetrics) -> ResourceMetricsDTO:
+    cost = metrics.cost_usd
+    return ResourceMetricsDTO(
+        asset_id=metrics.asset_id,
+        version_id=metrics.version_id,
+        window_hours=metrics.window_hours,
+        kind=metrics.kind,
+        invocations=metrics.invocations,
+        error_count=metrics.error_count,
+        error_rate=metrics.error_rate,
+        p95_latency_ms=metrics.p95_latency_ms,
+        cost_usd=float(cost if isinstance(cost, Decimal) else Decimal(str(cost))),
+        success_metric=metrics.success_metric,
+        success_rate=metrics.success_rate,
+        attribution_coverage=metrics.attribution_coverage,
     )
 
 

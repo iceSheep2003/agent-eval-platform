@@ -70,5 +70,9 @@ class SpanRow(Base, TimestampMixin):
     attributes: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
     error_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    #: 归因：这个 Span 属于哪个能力资产版本（N3）。归不上就是 NULL，不猜。
+    resource_asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    resource_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    resource_attribution: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     trace: Mapped["TraceRow"] = relationship()

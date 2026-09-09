@@ -189,8 +189,13 @@ class RunService:
         concurrency: int = 1,
         cost_budget_usd: float = 0.0,
         tenant_scope: Sequence[Id] | None = None,
+        binding_overrides: Mapping[Id, Id] | None = None,
     ) -> Run:
-        """冻结三件套：被测版本 + 数据集版本 + 策略快照。之后不可改。"""
+        """冻结四件套：被测版本 + 数据集版本 + 策略快照 + 引用快照。之后不可改。
+
+        `binding_overrides` 是能力资产 A/B 的入口：同一个 Agent 版本、同一份数据集，
+        只换掉某个 Skill / MCP / 知识库的版本，跑两次 Run 做对比。
+        """
         version = await self.assets.get_version_ref(asset_version_id, workspace_id)
         if version is None:
             raise NotFound("被测版本", asset_version_id)
@@ -210,6 +215,12 @@ class RunService:
         if sample_count == 0:
             raise DomainError(Errors.RUN_SUBJECT_INCOMPLETE, "数据集版本里没有样本")
 
+        # 引用快照：把「跟随通道」解析成具体版本并冻住。此后资源晋级不影响这个 Run。
+        overrides = dict(binding_overrides or {})
+        binding_snapshot = dict(
+            await self.assets.resolve_bindings(asset_version_id, workspace_id, overrides)
+        )
+
         run = Run(
             id=new_id("run"),
             workspace_id=workspace_id,
@@ -219,6 +230,8 @@ class RunService:
             subject_version_id=version.id,
             dataset_version_id=dataset_version_id,
             template_snapshot=snapshot_to_dict(snapshot),
+            binding_snapshot=binding_snapshot,
+            binding_overrides=overrides,
             tenant_scope=tuple(tenant_scope) if tenant_scope else "all",
             status=RunStatus.QUEUED,
             stage=RunStage.PROVISIONING,
@@ -496,6 +509,14 @@ class ExecutionHandlers:
             "__entrypoint__": version.entrypoint,
             "input": trial.instruction,
         }
+        # 能力资产走**冻结快照**，不重新解析：资源晋级不该改变这个 Run 的结果。
+        capabilities: dict[Id, dict[str, Any]] = {}
+        for provider_asset_id, provider_version_id in (run.binding_snapshot or {}).items():
+            ref = await self.assets.get_version_ref(provider_version_id, workspace_id)
+            if ref is not None:
+                capabilities[provider_asset_id] = dict(ref.spec)
+        if capabilities:
+            payload["__capabilities__"] = capabilities
         ctx = RunContext(
             run_id=run_id,
             trial_id=trial_id,
@@ -506,6 +527,13 @@ class ExecutionHandlers:
             timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
             cost_budget_usd=float(run.cost_budget_usd),
         )
+        # 能力资产走**冻结快照**，不重新解析：资源晋级不该改变这个 Run 的结果。
+        capabilities: dict[Id, dict[str, Any]] = {}
+        for provider_asset_id, provider_version_id in (run.binding_snapshot or {}).items():
+            ref = await self.assets.get_version_ref(provider_version_id, workspace_id)
+            if ref is not None:
+                capabilities[provider_asset_id] = dict(ref.spec)
+
         handle = await self.runtime.provision(
             RuntimeSpec(
                 asset_id=version.asset_id,
@@ -513,6 +541,7 @@ class ExecutionHandlers:
                 workspace_id=workspace_id,
                 entrypoint=version.entrypoint,
                 spec=version.spec,
+                capabilities=capabilities,
             ),
             ctx,
         )

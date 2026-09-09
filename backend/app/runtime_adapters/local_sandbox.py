@@ -66,6 +66,11 @@ class LocalSandboxRuntime:
 
         # **只传公开输入**：payload 由 execution 构造，不含 expected_output。
         arguments = {key: value for key, value in payload.items() if not key.startswith("__")}
+        # 能力资产按需注入：被测函数没声明 `capabilities` 形参就不传，
+        # 否则现有 Agent 的签名会被这个新参数打破。
+        capabilities = payload.get("__capabilities__")
+        if capabilities and "capabilities" in inspect.signature(target).parameters:
+            arguments["capabilities"] = capabilities
         started = time.perf_counter()
         try:
             if inspect.iscoroutinefunction(target):

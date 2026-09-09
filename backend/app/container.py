@@ -72,7 +72,7 @@ class Container:
             gates=evaluations,
             runtime=sandbox,
         )
-        traces = TraceService(database, resolved_clock, assets)
+        traces = TraceService(database, resolved_clock, assets, attributions=assets)
         delivery = DeliveryService(database, resolved_clock, assets, assets, runs)
         command_queue = CommandQueue(
             database,

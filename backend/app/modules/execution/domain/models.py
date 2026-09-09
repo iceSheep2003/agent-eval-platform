@@ -46,6 +46,11 @@ class Run:
     created_by: Id
     created_at: datetime
     ended_at: datetime | None = None
+    #: 冻结的引用快照：`provider_asset_id → provider_version_id`。
+    #: 「跟随通道」的引用在 CreateRun 时解析一次并冻结，之后资源晋级不影响这个 Run。
+    binding_snapshot: Mapping[Id, Id] = field(default_factory=dict)
+    #: 仅本次 Run 生效的引用覆盖（A/B 对比用）。已并入 `binding_snapshot`，这里留档。
+    binding_overrides: Mapping[Id, Id] = field(default_factory=dict)
 
     @property
     def is_terminal(self) -> bool:

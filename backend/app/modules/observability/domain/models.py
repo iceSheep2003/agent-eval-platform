@@ -39,6 +39,11 @@ class SpanRecord:
     attributes: Mapping[str, Any] = field(default_factory=dict)
     error_type: str | None = None
     error_message: str | None = None
+    #: 归因结果：这个 Span 属于哪个能力资产版本。归不上就保持 None。
+    resource_asset_id: Id | None = None
+    resource_version_id: Id | None = None
+    #: declared（来自 Run 冻结快照）/ resolved（按规则匹配）。None = 未归因。
+    resource_attribution: str | None = None
 
     @property
     def duration_ms(self) -> int | None:
@@ -90,6 +95,29 @@ class AgentMetrics:
     p95_latency_ms: int | None
     total_cost_usd: Decimal
     error_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceMetrics:
+    """一个能力资产版本的**使用质量**。口径显式命名，禁止裸 `success_rate`。
+
+    `success_metric` 说明 `success_rate` 是哪个口径：MCP 是工具调用成功率、
+    知识库是检索成功率、Skill 是完成率。三者混成一个字段就没法比较了。
+    """
+
+    asset_id: Id
+    version_id: Id
+    window_hours: int
+    kind: str
+    invocations: int
+    error_count: int
+    error_rate: float
+    p95_latency_ms: int | None
+    cost_usd: Decimal
+    success_metric: str | None
+    success_rate: float | None
+    #: 已归因 / 本应归因。掉下去说明**匹配规则**失效，不是资源变差了。
+    attribution_coverage: float | None
 
 
 def build_span_tree(spans: list[SpanRecord]) -> tuple[SpanNode, ...]:

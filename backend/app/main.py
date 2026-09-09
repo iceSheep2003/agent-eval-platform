@@ -16,6 +16,7 @@ from sqlalchemy import text
 
 from .api import CONSOLE_PREFIXES, MACHINE_PREFIX
 from .api import errors as api_errors
+from .api.agents_view import router as agents_view_router
 from .api.overview import router as overview_router
 from .api.regression import router as regression_router
 from .container import Container
@@ -42,6 +43,7 @@ CONSOLE_ROUTERS = (
     execution_router,
     trace_router,
     delivery_router,
+    agents_view_router,
     overview_router,
     regression_router,
 )

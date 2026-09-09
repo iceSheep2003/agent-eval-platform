@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 revision = 'asset_0002'
 down_revision = 'asset_0001'
-branch_labels = ('asset',)
+branch_labels = None
 depends_on = None
 
 
