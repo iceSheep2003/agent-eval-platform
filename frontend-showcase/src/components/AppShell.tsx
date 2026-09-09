@@ -19,7 +19,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </Link>
         <Space size={12}>
           <Typography.Text type="secondary">
-            {session?.projects.length ?? 0} 个项目
+            {session?.hubs.length ?? 0} 个门户
           </Typography.Text>
           <Dropdown
             menu={{

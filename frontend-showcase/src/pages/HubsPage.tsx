@@ -8,36 +8,36 @@ const ROLE_LABEL: Record<string, string> = {
   member: '成员',
 };
 
-export default function ProjectsPage() {
+export default function HubsPage() {
   const { session } = useSession();
-  const projects = session?.projects ?? [];
+  const hubs = session?.hubs ?? [];
 
   return (
     <div className="page">
-      <Typography.Title level={4}>我的项目</Typography.Title>
+      <Typography.Title level={4}>我的门户</Typography.Title>
       <Typography.Paragraph type="secondary">
-        只显示你是成员的项目——别人负责的项目在这里看不到。
+        只显示你是成员的门户——别人负责的门户在这里看不到。
       </Typography.Paragraph>
-      {projects.length === 0 ? (
-        <Empty description="你还没有被加入任何项目，请联系平台运营者" />
+      {hubs.length === 0 ? (
+        <Empty description="你还没有被加入任何门户，请联系平台运营者" />
       ) : (
         <div className="card-grid">
-          {projects.map((project) => (
-            <Link key={project.id} to={`/projects/${project.id}`}>
-              <Card hoverable className="project-card">
+          {hubs.map((hub) => (
+            <Link key={hub.id} to={`/hubs/${hub.id}`}>
+              <Card hoverable className="hub-card">
                 <Card.Meta
                   avatar={<FolderOpenOutlined style={{ fontSize: 22, color: '#4f7cff' }} />}
                   title={
                     <Space size={8}>
-                      {project.name}
-                      {project.my_role && (
-                        <Tag color={project.my_role === 'owner' ? 'blue' : 'default'}>
-                          {ROLE_LABEL[project.my_role] ?? project.my_role}
+                      {hub.name}
+                      {hub.my_role && (
+                        <Tag color={hub.my_role === 'owner' ? 'blue' : 'default'}>
+                          {ROLE_LABEL[hub.my_role] ?? hub.my_role}
                         </Tag>
                       )}
                     </Space>
                   }
-                  description={project.description || project.slug}
+                  description={hub.description || hub.slug}
                 />
               </Card>
             </Link>

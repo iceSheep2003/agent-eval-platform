@@ -3,8 +3,8 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import AppShell from './components/AppShell';
 import AgentChatPage from './pages/AgentChatPage';
 import LoginPage from './pages/LoginPage';
-import ProjectPage from './pages/ProjectPage';
-import ProjectsPage from './pages/ProjectsPage';
+import HubPage from './pages/HubPage';
+import HubsPage from './pages/HubsPage';
 import { useSession } from './session';
 
 export default function App() {
@@ -30,10 +30,10 @@ export default function App() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<ProjectsPage />} />
-        <Route path="/projects/:projectId" element={<ProjectPage />} />
+        <Route path="/" element={<HubsPage />} />
+        <Route path="/hubs/:hubId" element={<HubPage />} />
         <Route
-          path="/projects/:projectId/agents/:agentId"
+          path="/hubs/:hubId/agents/:agentId"
           element={<AgentChatPage />}
         />
         <Route path="*" element={<Navigate to="/" replace />} />

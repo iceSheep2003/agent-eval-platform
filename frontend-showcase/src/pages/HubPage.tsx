@@ -3,11 +3,11 @@ import { Alert, Button, Card, Empty, Skeleton, Space, Tag, Typography } from 'an
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
-  getProject,
+  getHub,
   listAgents,
   type PortalAgent,
   type PortalChannel,
-  type PortalProject,
+  type PortalHub,
 } from '../api/portal';
 import { CHANNEL_COLOR } from '../theme';
 
@@ -27,9 +27,9 @@ function ChannelChips({ channels }: { channels: PortalChannel[] }) {
   );
 }
 
-export default function ProjectPage() {
-  const { projectId = '' } = useParams();
-  const [project, setProject] = useState<PortalProject | null>(null);
+export default function HubPage() {
+  const { hubId = '' } = useParams();
+  const [hub, setHub] = useState<PortalHub | null>(null);
   const [agents, setAgents] = useState<PortalAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,10 +37,10 @@ export default function ProjectPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([getProject(projectId), listAgents(projectId)])
-      .then(([nextProject, nextAgents]) => {
+    Promise.all([getHub(hubId), listAgents(hubId)])
+      .then(([nextHub, nextAgents]) => {
         if (cancelled) return;
-        setProject(nextProject);
+        setHub(nextHub);
         setAgents(nextAgents);
         setError(null);
       })
@@ -53,25 +53,25 @@ export default function ProjectPage() {
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [hubId]);
 
   return (
     <div className="page">
       <Link to="/" className="back-link">
-        <ArrowLeftOutlined /> 返回项目列表
+        <ArrowLeftOutlined /> 返回门户列表
       </Link>
       <Typography.Title level={4} style={{ marginTop: 12 }}>
-        {project?.name ?? '项目'}
+        {hub?.name ?? '门户'}
       </Typography.Title>
-      {project?.description && (
-        <Typography.Paragraph type="secondary">{project.description}</Typography.Paragraph>
+      {hub?.description && (
+        <Typography.Paragraph type="secondary">{hub.description}</Typography.Paragraph>
       )}
       {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
 
       {loading ? (
         <Skeleton active />
       ) : agents.length === 0 ? (
-        <Empty description="该项目下还没有 Agent" />
+        <Empty description="该门户下还没有 Agent" />
       ) : (
         <div className="card-grid">
           {agents.map((agent) => (
@@ -80,7 +80,7 @@ export default function ProjectPage() {
               className="agent-card"
               title={agent.display_name}
               extra={
-                <Link to={`/projects/${projectId}/agents/${agent.id}`}>
+                <Link to={`/hubs/${hubId}/agents/${agent.id}`}>
                   <Button type="primary" size="small" icon={<MessageOutlined />}>
                     对话
                   </Button>

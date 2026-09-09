@@ -50,7 +50,7 @@ def upgrade() -> None:
     with op.batch_alter_table('portal_session', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_portal_session_portal_user_id'), ['portal_user_id'], unique=False)
 
-    op.create_table('portal_project',
+    op.create_table('portal_hub',
     sa.Column('id', sa.String(length=64), nullable=False),
     sa.Column('workspace_id', sa.String(length=64), nullable=False),
     sa.Column('slug', sa.String(length=64), nullable=False),
@@ -61,73 +61,73 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('workspace_id', 'slug', name='uq_portal_project_slug')
+    sa.UniqueConstraint('workspace_id', 'slug', name='uq_portal_hub_slug')
     )
-    with op.batch_alter_table('portal_project', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_portal_project_workspace_id'), ['workspace_id'], unique=False)
+    with op.batch_alter_table('portal_hub', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_portal_hub_workspace_id'), ['workspace_id'], unique=False)
 
-    op.create_table('portal_member',
+    op.create_table('portal_hub_member',
     sa.Column('id', sa.String(length=64), nullable=False),
-    sa.Column('project_id', sa.String(length=64), nullable=False),
+    sa.Column('hub_id', sa.String(length=64), nullable=False),
     sa.Column('portal_user_id', sa.String(length=64), nullable=False),
     sa.Column('role', sa.String(length=16), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('project_id', 'portal_user_id', name='uq_portal_member')
+    sa.UniqueConstraint('hub_id', 'portal_user_id', name='uq_portal_hub_member')
     )
-    with op.batch_alter_table('portal_member', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_portal_member_project_id'), ['project_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_portal_member_portal_user_id'), ['portal_user_id'], unique=False)
+    with op.batch_alter_table('portal_hub_member', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_portal_hub_member_hub_id'), ['hub_id'], unique=False)
+        batch_op.create_index(batch_op.f('ix_portal_hub_member_portal_user_id'), ['portal_user_id'], unique=False)
 
-    op.create_table('portal_project_agent',
+    op.create_table('portal_hub_agent',
     sa.Column('id', sa.String(length=64), nullable=False),
-    sa.Column('project_id', sa.String(length=64), nullable=False),
+    sa.Column('hub_id', sa.String(length=64), nullable=False),
     sa.Column('asset_id', sa.String(length=64), nullable=False),
     sa.Column('display_name', sa.String(length=128), nullable=False),
     sa.Column('sort_order', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('project_id', 'asset_id', name='uq_portal_project_asset')
+    sa.UniqueConstraint('hub_id', 'asset_id', name='uq_portal_hub_asset')
     )
-    with op.batch_alter_table('portal_project_agent', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_portal_project_agent_project_id'), ['project_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_portal_project_agent_asset_id'), ['asset_id'], unique=False)
+    with op.batch_alter_table('portal_hub_agent', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_portal_hub_agent_hub_id'), ['hub_id'], unique=False)
+        batch_op.create_index(batch_op.f('ix_portal_hub_agent_asset_id'), ['asset_id'], unique=False)
 
     op.create_table('portal_agent_channel',
     sa.Column('id', sa.String(length=64), nullable=False),
-    sa.Column('project_agent_id', sa.String(length=64), nullable=False),
+    sa.Column('hub_agent_id', sa.String(length=64), nullable=False),
     sa.Column('channel', sa.String(length=16), nullable=False),
     sa.Column('deployment_credential_id', sa.String(length=64), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('project_agent_id', 'channel', name='uq_portal_agent_channel')
+    sa.UniqueConstraint('hub_agent_id', 'channel', name='uq_portal_agent_channel')
     )
     with op.batch_alter_table('portal_agent_channel', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_portal_agent_channel_project_agent_id'), ['project_agent_id'], unique=False)
+        batch_op.create_index(batch_op.f('ix_portal_agent_channel_hub_agent_id'), ['hub_agent_id'], unique=False)
 
 
 def downgrade() -> None:
     with op.batch_alter_table('portal_agent_channel', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_portal_agent_channel_project_agent_id'))
+        batch_op.drop_index(batch_op.f('ix_portal_agent_channel_hub_agent_id'))
 
     op.drop_table('portal_agent_channel')
-    with op.batch_alter_table('portal_project_agent', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_portal_project_agent_asset_id'))
-        batch_op.drop_index(batch_op.f('ix_portal_project_agent_project_id'))
+    with op.batch_alter_table('portal_hub_agent', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_portal_hub_agent_asset_id'))
+        batch_op.drop_index(batch_op.f('ix_portal_hub_agent_hub_id'))
 
-    op.drop_table('portal_project_agent')
-    with op.batch_alter_table('portal_member', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_portal_member_portal_user_id'))
-        batch_op.drop_index(batch_op.f('ix_portal_member_project_id'))
+    op.drop_table('portal_hub_agent')
+    with op.batch_alter_table('portal_hub_member', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_portal_hub_member_portal_user_id'))
+        batch_op.drop_index(batch_op.f('ix_portal_hub_member_hub_id'))
 
-    op.drop_table('portal_member')
-    with op.batch_alter_table('portal_project', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_portal_project_workspace_id'))
+    op.drop_table('portal_hub_member')
+    with op.batch_alter_table('portal_hub', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_portal_hub_workspace_id'))
 
-    op.drop_table('portal_project')
+    op.drop_table('portal_hub')
     with op.batch_alter_table('portal_session', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_portal_session_portal_user_id'))
 

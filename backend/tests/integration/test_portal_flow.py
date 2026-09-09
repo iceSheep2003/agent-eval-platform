@@ -1,7 +1,7 @@
 """展示平台端到端：运营供给 → 外部用户登录 → 切通道 → 对话。
 
 覆盖四条硬约束：
-1. 非成员拿不到项目（404，不是 403——不给项目枚举留缝）；
+1. 非成员拿不到门户（404，不是 403——不给门户枚举留缝）；
 2. 通道列表恒为三条，LIVESH 带「影子预览」提示；
 3. 对话走的是**该通道绑定的版本**，且线格式是 OpenAI 兼容 SSE；
 4. 撤销部署凭证后对话立刻失效——portal 只存凭证引用，不存密钥。
@@ -100,7 +100,7 @@ async def _scenario(tmp_path) -> None:
             )
             assert login.status_code == 200, login.text
 
-            # -- 供给：建 portal 账号 / 项目 / 成员 / 挂 Agent / 签发密钥 ------
+            # -- 供给：建 portal 账号 / 门户 / 成员 / 挂 Agent / 签发密钥 ------
             created_user = await client.post(
                 "/api/portal-admin/users",
                 json={
@@ -112,21 +112,21 @@ async def _scenario(tmp_path) -> None:
             assert created_user.status_code == 200, created_user.text
             alice_id = created_user.json()["data"]["id"]
 
-            created_project = await client.post(
-                "/api/portal-admin/projects",
-                json={"slug": "support", "name": "客服项目"},
+            created_hub = await client.post(
+                "/api/portal-admin/hubs",
+                json={"slug": "support", "name": "客服门户"},
             )
-            assert created_project.status_code == 200, created_project.text
-            project_id = created_project.json()["data"]["id"]
+            assert created_hub.status_code == 200, created_hub.text
+            hub_id = created_hub.json()["data"]["id"]
 
             member = await client.post(
-                f"/api/portal-admin/projects/{project_id}/members",
+                f"/api/portal-admin/hubs/{hub_id}/members",
                 json={"portal_user_id": alice_id, "role": "owner"},
             )
             assert member.status_code == 200, member.text
 
             attached = await client.post(
-                f"/api/portal-admin/projects/{project_id}/agents",
+                f"/api/portal-admin/hubs/{hub_id}/agents",
                 json={"asset_id": agent.id},
             )
             assert attached.status_code == 200, attached.text
@@ -170,7 +170,7 @@ async def _scenario(tmp_path) -> None:
                 json={"deployment_credential_id": shadow_credential_id},
             )
 
-            # 非成员：bob 不属于任何项目
+            # 非成员：bob 不属于任何门户
             await client.post(
                 "/api/portal-admin/users",
                 json={
@@ -186,10 +186,10 @@ async def _scenario(tmp_path) -> None:
                 json={"identifier": "alice", "password": PORTAL_PASSWORD},
             )
             assert portal_login.status_code == 200, portal_login.text
-            assert portal_login.json()["data"]["projects"][0]["slug"] == "support"
+            assert portal_login.json()["data"]["hubs"][0]["slug"] == "support"
 
             # -- 通道列表：恒三条，LIVESH 带提示 ----------------------------
-            agents = await client.get(f"/api/portal/projects/{project_id}/agents")
+            agents = await client.get(f"/api/portal/hubs/{hub_id}/agents")
             assert agents.status_code == 200, agents.text
             items = agents.json()["data"]["items"]
             assert len(items) == 1
@@ -202,7 +202,7 @@ async def _scenario(tmp_path) -> None:
 
             # -- 对话：打的是通道绑定的版本 --------------------------------
             chat = await client.post(
-                f"/api/portal/projects/{project_id}/agents/{portal_agent_id}"
+                f"/api/portal/hubs/{hub_id}/agents/{portal_agent_id}"
                 f"/channels/live/chat",
                 json={"message": "你好"},
             )
@@ -212,7 +212,7 @@ async def _scenario(tmp_path) -> None:
             assert body["version"] == version.version_label
 
             shadow_chat = await client.post(
-                f"/api/portal/projects/{project_id}/agents/{portal_agent_id}"
+                f"/api/portal/hubs/{hub_id}/agents/{portal_agent_id}"
                 f"/channels/livesh/chat",
                 json={"message": "你好"},
             )
@@ -224,7 +224,7 @@ async def _scenario(tmp_path) -> None:
             # -- 流式：OpenAI 兼容分块 --------------------------------------
             lines = await _sse_lines(
                 client,
-                f"/api/portal/projects/{project_id}/agents/{portal_agent_id}"
+                f"/api/portal/hubs/{hub_id}/agents/{portal_agent_id}"
                 f"/channels/livesh/chat",
                 {"message": "你好", "stream": True},
             )
@@ -240,7 +240,7 @@ async def _scenario(tmp_path) -> None:
 
             # -- 限流：超过每分钟上限后 429，而不是把执行面打满 ----------------
             chat_path = (
-                f"/api/portal/projects/{project_id}/agents/{portal_agent_id}"
+                f"/api/portal/hubs/{hub_id}/agents/{portal_agent_id}"
                 f"/channels/live/chat"
             )
             codes = [chat.status_code]
@@ -261,7 +261,7 @@ async def _scenario(tmp_path) -> None:
                 "portal.login",
                 "portal.chat",
                 "portal_admin.user.create",
-                "portal_admin.project.create",
+                "portal_admin.hub.create",
                 "portal_admin.member.add",
                 "portal_admin.agent.attach",
                 "portal_admin.channel.bind",
@@ -274,7 +274,7 @@ async def _scenario(tmp_path) -> None:
                 json={"identifier": "bob", "password": PORTAL_PASSWORD},
             )
             assert bob_login.status_code == 200
-            forbidden = await client.get(f"/api/portal/projects/{project_id}")
+            forbidden = await client.get(f"/api/portal/hubs/{hub_id}")
             assert forbidden.status_code == 404
 
         # -- 撤销凭证 → 对话失效 -------------------------------------------
@@ -289,7 +289,7 @@ async def _scenario(tmp_path) -> None:
                 json={"identifier": "alice", "password": PORTAL_PASSWORD},
             )
             broken = await client.post(
-                f"/api/portal/projects/{project_id}/agents/{portal_agent_id}"
+                f"/api/portal/hubs/{hub_id}/agents/{portal_agent_id}"
                 f"/channels/live/chat",
                 json={"message": "你好"},
             )

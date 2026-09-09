@@ -5,7 +5,7 @@
 `PortalAgentChannel.deployment_credential_id`——它指向 asset 的一把 `evl_` 密钥，
 用来按通道调用已发布版本。
 
-项目归属工作区（因为它展示的 Agent 属于某个工作区），但**成员是 portal 用户**。
+门户归属工作区（因为它展示的 Agent 属于某个工作区），但**成员是 portal 用户**。
 """
 
 from __future__ import annotations
@@ -16,12 +16,12 @@ from typing import Any, Literal, Mapping
 
 from ....contracts.common import Channel, Id
 
-#: 项目角色。`owner` 管成员与挂载，`member` 只能看和对话。
+#: 门户角色。`owner` 管成员与挂载，`member` 只能看和对话。
 #: 两者当前的**权限点集合相同**（展示平台只读+对话），差别在结构上先留好。
-ProjectRole = Literal["owner", "member"]
+HubRole = Literal["owner", "member"]
 
 PortalUserStatus = Literal["active", "disabled"]
-ProjectStatus = Literal["active", "archived"]
+HubStatus = Literal["active", "archived"]
 
 
 #: 连续失败多少次后锁定账号，以及锁多久。
@@ -64,32 +64,32 @@ class PortalSession:
 
 
 @dataclass(frozen=True, slots=True)
-class PortalProject:
+class PortalHub:
     id: Id
     workspace_id: Id
     slug: str
     name: str
     description: str
-    status: ProjectStatus
+    status: HubStatus
     created_by: Id
     created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
-class ProjectMember:
+class HubMember:
     id: Id
-    project_id: Id
+    hub_id: Id
     portal_user_id: Id
-    role: ProjectRole
+    role: HubRole
     created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
-class ProjectAgent:
-    """项目里挂的一个 Agent。`asset_id` 指向平台的资产，**不复制它的内容**。"""
+class HubAgent:
+    """门户里挂的一个 Agent。`asset_id` 指向平台的资产，**不复制它的内容**。"""
 
     id: Id
-    project_id: Id
+    hub_id: Id
     asset_id: Id
     display_name: str
     sort_order: int
@@ -135,13 +135,13 @@ class RateLimitWindow:
 
 @dataclass(frozen=True, slots=True)
 class PortalAgentChannel:
-    """项目 Agent 的某个通道用哪把部署密钥。
+    """门户 Agent 的某个通道用哪把部署密钥。
 
     只存**凭证引用**，不存密钥明文——撤销凭证即对话失效，与平台侧一致。
     """
 
     id: Id
-    project_agent_id: Id
+    hub_agent_id: Id
     channel: Channel
     deployment_credential_id: Id | None
     created_at: datetime

@@ -46,10 +46,10 @@ class PortalSessionRow(Base, TimestampMixin):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-class PortalProjectRow(Base, TimestampMixin):
-    __tablename__ = "portal_project"
+class PortalHubRow(Base, TimestampMixin):
+    __tablename__ = "portal_hub"
     __table_args__ = (
-        UniqueConstraint("workspace_id", "slug", name="uq_portal_project_slug"),
+        UniqueConstraint("workspace_id", "slug", name="uq_portal_hub_slug"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -61,27 +61,27 @@ class PortalProjectRow(Base, TimestampMixin):
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
-class ProjectMemberRow(Base, TimestampMixin):
-    __tablename__ = "portal_member"
+class HubMemberRow(Base, TimestampMixin):
+    __tablename__ = "portal_hub_member"
     __table_args__ = (
-        UniqueConstraint("project_id", "portal_user_id", name="uq_portal_member"),
+        UniqueConstraint("hub_id", "portal_user_id", name="uq_portal_hub_member"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    project_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    hub_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     portal_user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     #: owner | member
     role: Mapped[str] = mapped_column(String(16), nullable=False, default="member")
 
 
-class ProjectAgentRow(Base, TimestampMixin):
-    __tablename__ = "portal_project_agent"
+class HubAgentRow(Base, TimestampMixin):
+    __tablename__ = "portal_hub_agent"
     __table_args__ = (
-        UniqueConstraint("project_id", "asset_id", name="uq_portal_project_asset"),
+        UniqueConstraint("hub_id", "asset_id", name="uq_portal_hub_asset"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    project_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    hub_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     asset_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -126,11 +126,11 @@ class RateLimitRow(Base, TimestampMixin):
 class PortalAgentChannelRow(Base, TimestampMixin):
     __tablename__ = "portal_agent_channel"
     __table_args__ = (
-        UniqueConstraint("project_agent_id", "channel", name="uq_portal_agent_channel"),
+        UniqueConstraint("hub_agent_id", "channel", name="uq_portal_agent_channel"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    project_agent_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    hub_agent_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     channel: Mapped[str] = mapped_column(String(16), nullable=False)
     #: 指向 asset_credential 的 `evl_` 凭证；只存引用，不存密钥
     deployment_credential_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

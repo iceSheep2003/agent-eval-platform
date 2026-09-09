@@ -60,8 +60,8 @@ PREFIXES: dict[str, str] = {
     # portal（展示平台，独立账号体系）
     "portal_user": "pu",
     "portal_session": "ps",
-    "portal_project": "pp",
-    "portal_member": "pm",
+    "portal_hub": "ph",
+    "portal_hub_member": "pm",
     "portal_agent": "pa",
     "portal_channel": "pc",
     # improvement

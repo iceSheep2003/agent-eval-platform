@@ -11,7 +11,7 @@ export interface PortalUser {
   status?: string;
 }
 
-export interface PortalProject {
+export interface PortalHub {
   id: string;
   slug: string;
   name: string;
@@ -41,7 +41,7 @@ export interface PortalAgent {
 
 export interface PortalSession {
   user: PortalUser;
-  projects: PortalProject[];
+  hubs: PortalHub[];
 }
 
 export const portalLogin = (identifier: string, password: string) =>
@@ -51,14 +51,14 @@ export const portalLogout = () => http.post<never, { ok: boolean }>('/api/portal
 
 export const getSession = () => http.get<never, PortalSession>('/api/portal/me');
 
-export const getProject = (projectId: string) =>
-  http.get<never, PortalProject>(`/api/portal/projects/${projectId}`);
+export const getHub = (hubId: string) =>
+  http.get<never, PortalHub>(`/api/portal/hubs/${hubId}`);
 
-export const listAgents = (projectId: string) =>
-  requestList<PortalAgent>(`/api/portal/projects/${projectId}/agents`);
+export const listAgents = (hubId: string) =>
+  requestList<PortalAgent>(`/api/portal/hubs/${hubId}/agents`);
 
-export const getAgent = (projectId: string, agentId: string) =>
-  http.get<never, PortalAgent>(`/api/portal/projects/${projectId}/agents/${agentId}`);
+export const getAgent = (hubId: string, agentId: string) =>
+  http.get<never, PortalAgent>(`/api/portal/hubs/${hubId}/agents/${agentId}`);
 
-export const chatUrl = (projectId: string, agentId: string, channel: ChannelValue) =>
-  `/api/portal/projects/${projectId}/agents/${agentId}/channels/${channel}/chat`;
+export const chatUrl = (hubId: string, agentId: string, channel: ChannelValue) =>
+  `/api/portal/hubs/${hubId}/agents/${agentId}/channels/${channel}/chat`;

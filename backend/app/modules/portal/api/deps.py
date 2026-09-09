@@ -16,7 +16,7 @@ from ....container import Container
 from ....contracts.errors import DomainError, Errors, NotFound
 from ....contracts.common import Id
 from ..application.services import PortalAuthService
-from ..domain.models import PortalProject, PortalUser, ProjectRole
+from ..domain.models import PortalHub, PortalUser, HubRole
 from ..domain.permission import PortalDecision, decide_portal
 
 PORTAL_COOKIE_PATH = "/"
@@ -24,11 +24,11 @@ PORTAL_COOKIE_PATH = "/"
 
 @dataclass(frozen=True, slots=True)
 class PortalActor:
-    """一次已认证的展示平台请求。`project` 只在项目内路由上非空。"""
+    """一次已认证的展示平台请求。`hub` 只在门户内路由上非空。"""
 
     user: PortalUser
-    project: PortalProject | None = None
-    role: ProjectRole | None = None
+    hub: PortalHub | None = None
+    role: HubRole | None = None
 
 
 def get_portal_auth(container: Annotated[Container, Depends(get_container)]) -> PortalAuthService:
@@ -66,39 +66,39 @@ async def get_portal_actor(
     return PortalActor(user=user)
 
 
-async def _resolve_project(
-    project_id: str,
+async def _resolve_hub(
+    hub_id: str,
     actor: PortalActor,
     auth: PortalAuthService,
     container: Container,
     action: str,
 ) -> PortalActor:
-    """解析项目成员身份。**非成员一律 404**——不让外部用户枚举出项目是否存在。"""
-    membership = await auth.membership(project_id, actor.user.id)
-    decision: PortalDecision = decide_portal(membership, action, project_id)
+    """解析门户成员身份。**非成员一律 404**——不让外部用户枚举出门户是否存在。"""
+    membership = await auth.membership(hub_id, actor.user.id)
+    decision: PortalDecision = decide_portal(membership, action, hub_id)
     if not decision.allowed:
-        raise NotFound("项目", project_id)
+        raise NotFound("门户", hub_id)
     assert membership is not None  # decide_portal 已保证
-    project = await container.portal.get_project_unscoped(project_id)
-    return PortalActor(user=actor.user, project=project, role=membership.role)
+    hub = await container.portal.get_hub_unscoped(hub_id)
+    return PortalActor(user=actor.user, hub=hub, role=membership.role)
 
 
-def require_project(action: str):
+def require_hub(action: str):
     async def dependency(
-        project_id: str,
+        hub_id: str,
         actor: Annotated[PortalActor, Depends(get_portal_actor)],
         auth: Annotated[PortalAuthService, Depends(get_portal_auth)],
         container: Annotated[Container, Depends(get_container)],
     ) -> PortalActor:
-        return await _resolve_project(project_id, actor, auth, container, action)
+        return await _resolve_hub(hub_id, actor, auth, container, action)
 
     return dependency
 
 
 PortalActorDep = Annotated[PortalActor, Depends(get_portal_actor)]
-ProjectActorDep = Annotated[PortalActor, Depends(require_project("project:read"))]
+HubActorDep = Annotated[PortalActor, Depends(require_hub("hub:read"))]
 
 
-def project_workspace_id(actor: PortalActor) -> Id:
-    assert actor.project is not None
-    return actor.project.workspace_id
+def hub_workspace_id(actor: PortalActor) -> Id:
+    assert actor.hub is not None
+    return actor.hub.workspace_id

@@ -13,21 +13,21 @@ from ....shared.clock import ensure_aware
 from ..domain.models import (
     AuditEntry,
     PortalAgentChannel,
-    PortalProject,
+    PortalHub,
     PortalSession,
     PortalUser,
-    ProjectAgent,
-    ProjectMember,
+    HubAgent,
+    HubMember,
     RateLimitWindow,
 )
 from .tables import (
     AuditRow,
     PortalAgentChannelRow,
-    PortalProjectRow,
+    PortalHubRow,
     PortalSessionRow,
     PortalUserRow,
-    ProjectAgentRow,
-    ProjectMemberRow,
+    HubAgentRow,
+    HubMemberRow,
     RateLimitRow,
 )
 
@@ -57,8 +57,8 @@ def _session(row: PortalSessionRow) -> PortalSession:
     )
 
 
-def _project(row: PortalProjectRow) -> PortalProject:
-    return PortalProject(
+def _hub(row: PortalHubRow) -> PortalHub:
+    return PortalHub(
         id=row.id,
         workspace_id=row.workspace_id,
         slug=row.slug,
@@ -70,20 +70,20 @@ def _project(row: PortalProjectRow) -> PortalProject:
     )
 
 
-def _member(row: ProjectMemberRow) -> ProjectMember:
-    return ProjectMember(
+def _member(row: HubMemberRow) -> HubMember:
+    return HubMember(
         id=row.id,
-        project_id=row.project_id,
+        hub_id=row.hub_id,
         portal_user_id=row.portal_user_id,
         role=row.role,  # type: ignore[arg-type]
         created_at=ensure_aware(row.created_at),
     )
 
 
-def _project_agent(row: ProjectAgentRow) -> ProjectAgent:
-    return ProjectAgent(
+def _hub_agent(row: HubAgentRow) -> HubAgent:
+    return HubAgent(
         id=row.id,
-        project_id=row.project_id,
+        hub_id=row.hub_id,
         asset_id=row.asset_id,
         display_name=row.display_name,
         sort_order=row.sort_order,
@@ -94,7 +94,7 @@ def _project_agent(row: ProjectAgentRow) -> ProjectAgent:
 def _channel(row: PortalAgentChannelRow) -> PortalAgentChannel:
     return PortalAgentChannel(
         id=row.id,
-        project_agent_id=row.project_agent_id,
+        hub_agent_id=row.hub_agent_id,
         channel=Channel(row.channel),
         deployment_credential_id=row.deployment_credential_id,
         created_at=ensure_aware(row.created_at),
@@ -203,136 +203,136 @@ class PortalSessionRepository:
         return len(rows)
 
 
-class PortalProjectRepository:
+class PortalHubRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, project_id: str, workspace_id: str) -> PortalProject | None:
-        stmt = select(PortalProjectRow).where(
-            PortalProjectRow.id == project_id,
-            PortalProjectRow.workspace_id == workspace_id,
+    async def get(self, hub_id: str, workspace_id: str) -> PortalHub | None:
+        stmt = select(PortalHubRow).where(
+            PortalHubRow.id == hub_id,
+            PortalHubRow.workspace_id == workspace_id,
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        return _project(row) if row else None
+        return _hub(row) if row else None
 
-    async def get_any(self, project_id: str) -> PortalProject | None:
+    async def get_any(self, hub_id: str) -> PortalHub | None:
         """按 ID 取，不限定工作区。调用方必须自己保证授权（portal 侧靠成员校验）。"""
-        row = await self._session.get(PortalProjectRow, project_id)
-        return _project(row) if row else None
+        row = await self._session.get(PortalHubRow, hub_id)
+        return _hub(row) if row else None
 
-    async def find_by_slug(self, workspace_id: str, slug: str) -> PortalProject | None:
-        stmt = select(PortalProjectRow).where(
-            PortalProjectRow.workspace_id == workspace_id, PortalProjectRow.slug == slug
+    async def find_by_slug(self, workspace_id: str, slug: str) -> PortalHub | None:
+        stmt = select(PortalHubRow).where(
+            PortalHubRow.workspace_id == workspace_id, PortalHubRow.slug == slug
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        return _project(row) if row else None
+        return _hub(row) if row else None
 
-    async def list_for_workspace(self, workspace_id: str) -> Sequence[PortalProject]:
+    async def list_for_workspace(self, workspace_id: str) -> Sequence[PortalHub]:
         stmt = (
-            select(PortalProjectRow)
-            .where(PortalProjectRow.workspace_id == workspace_id)
-            .order_by(PortalProjectRow.created_at.desc())
+            select(PortalHubRow)
+            .where(PortalHubRow.workspace_id == workspace_id)
+            .order_by(PortalHubRow.created_at.desc())
         )
-        return [_project(row) for row in (await self._session.execute(stmt)).scalars().all()]
+        return [_hub(row) for row in (await self._session.execute(stmt)).scalars().all()]
 
     async def list_for_user(
         self, portal_user_id: str
-    ) -> Sequence[tuple[PortalProject, str]]:
-        """只返回该用户是成员的项目——展示平台的可见性边界。
+    ) -> Sequence[tuple[PortalHub, str]]:
+        """只返回该用户是成员的门户——展示平台的可见性边界。
 
-        连同**项目角色**一起返回：前端要按角色决定是否显示管理入口，
+        连同**门户角色**一起返回：前端要按角色决定是否显示管理入口，
         分开查会变成 N+1。
         """
         stmt = (
-            select(PortalProjectRow, ProjectMemberRow.role)
-            .join(ProjectMemberRow, ProjectMemberRow.project_id == PortalProjectRow.id)
-            .where(ProjectMemberRow.portal_user_id == portal_user_id)
-            .order_by(PortalProjectRow.created_at.desc())
+            select(PortalHubRow, HubMemberRow.role)
+            .join(HubMemberRow, HubMemberRow.hub_id == PortalHubRow.id)
+            .where(HubMemberRow.portal_user_id == portal_user_id)
+            .order_by(PortalHubRow.created_at.desc())
         )
         rows = (await self._session.execute(stmt)).all()
-        return [(_project(row[0]), str(row[1])) for row in rows]
+        return [(_hub(row[0]), str(row[1])) for row in rows]
 
-    def add(self, project: PortalProject) -> None:
+    def add(self, hub: PortalHub) -> None:
         self._session.add(
-            PortalProjectRow(
-                id=project.id,
-                workspace_id=project.workspace_id,
-                slug=project.slug,
-                name=project.name,
-                description=project.description,
-                status=project.status,
-                created_by=project.created_by,
+            PortalHubRow(
+                id=hub.id,
+                workspace_id=hub.workspace_id,
+                slug=hub.slug,
+                name=hub.name,
+                description=hub.description,
+                status=hub.status,
+                created_by=hub.created_by,
             )
         )
 
 
-class ProjectMemberRepository:
+class HubMemberRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, project_id: str, portal_user_id: str) -> ProjectMember | None:
-        stmt = select(ProjectMemberRow).where(
-            ProjectMemberRow.project_id == project_id,
-            ProjectMemberRow.portal_user_id == portal_user_id,
+    async def get(self, hub_id: str, portal_user_id: str) -> HubMember | None:
+        stmt = select(HubMemberRow).where(
+            HubMemberRow.hub_id == hub_id,
+            HubMemberRow.portal_user_id == portal_user_id,
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _member(row) if row else None
 
-    async def list_for_project(self, project_id: str) -> Sequence[ProjectMember]:
-        stmt = select(ProjectMemberRow).where(ProjectMemberRow.project_id == project_id)
+    async def list_for_hub(self, hub_id: str) -> Sequence[HubMember]:
+        stmt = select(HubMemberRow).where(HubMemberRow.hub_id == hub_id)
         return [_member(row) for row in (await self._session.execute(stmt)).scalars().all()]
 
-    def add(self, member: ProjectMember) -> None:
+    def add(self, member: HubMember) -> None:
         self._session.add(
-            ProjectMemberRow(
+            HubMemberRow(
                 id=member.id,
-                project_id=member.project_id,
+                hub_id=member.hub_id,
                 portal_user_id=member.portal_user_id,
                 role=member.role,
             )
         )
 
     async def remove(self, member_id: str) -> None:
-        row = await self._session.get(ProjectMemberRow, member_id)
+        row = await self._session.get(HubMemberRow, member_id)
         if row is not None:
             await self._session.delete(row)
 
 
-class ProjectAgentRepository:
+class HubAgentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, project_agent_id: str) -> ProjectAgent | None:
-        row = await self._session.get(ProjectAgentRow, project_agent_id)
-        return _project_agent(row) if row else None
+    async def get(self, hub_agent_id: str) -> HubAgent | None:
+        row = await self._session.get(HubAgentRow, hub_agent_id)
+        return _hub_agent(row) if row else None
 
-    async def list_for_project(self, project_id: str) -> Sequence[ProjectAgent]:
+    async def list_for_hub(self, hub_id: str) -> Sequence[HubAgent]:
         stmt = (
-            select(ProjectAgentRow)
-            .where(ProjectAgentRow.project_id == project_id)
-            .order_by(ProjectAgentRow.sort_order, ProjectAgentRow.created_at)
+            select(HubAgentRow)
+            .where(HubAgentRow.hub_id == hub_id)
+            .order_by(HubAgentRow.sort_order, HubAgentRow.created_at)
         )
         return [
-            _project_agent(row)
+            _hub_agent(row)
             for row in (await self._session.execute(stmt)).scalars().all()
         ]
 
-    async def find(self, project_id: str, asset_id: str) -> ProjectAgent | None:
-        stmt = select(ProjectAgentRow).where(
-            ProjectAgentRow.project_id == project_id,
-            ProjectAgentRow.asset_id == asset_id,
+    async def find(self, hub_id: str, asset_id: str) -> HubAgent | None:
+        stmt = select(HubAgentRow).where(
+            HubAgentRow.hub_id == hub_id,
+            HubAgentRow.asset_id == asset_id,
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
-        return _project_agent(row) if row else None
+        return _hub_agent(row) if row else None
 
-    def add(self, project_agent: ProjectAgent) -> None:
+    def add(self, hub_agent: HubAgent) -> None:
         self._session.add(
-            ProjectAgentRow(
-                id=project_agent.id,
-                project_id=project_agent.project_id,
-                asset_id=project_agent.asset_id,
-                display_name=project_agent.display_name,
-                sort_order=project_agent.sort_order,
+            HubAgentRow(
+                id=hub_agent.id,
+                hub_id=hub_agent.hub_id,
+                asset_id=hub_agent.asset_id,
+                display_name=hub_agent.display_name,
+                sort_order=hub_agent.sort_order,
             )
         )
 
@@ -341,29 +341,29 @@ class PortalAgentChannelRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, project_agent_id: str, channel: Channel) -> PortalAgentChannel | None:
+    async def get(self, hub_agent_id: str, channel: Channel) -> PortalAgentChannel | None:
         stmt = select(PortalAgentChannelRow).where(
-            PortalAgentChannelRow.project_agent_id == project_agent_id,
+            PortalAgentChannelRow.hub_agent_id == hub_agent_id,
             PortalAgentChannelRow.channel == channel.value,
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _channel(row) if row else None
 
-    async def list_for_agent(self, project_agent_id: str) -> Sequence[PortalAgentChannel]:
+    async def list_for_agent(self, hub_agent_id: str) -> Sequence[PortalAgentChannel]:
         stmt = select(PortalAgentChannelRow).where(
-            PortalAgentChannelRow.project_agent_id == project_agent_id
+            PortalAgentChannelRow.hub_agent_id == hub_agent_id
         )
         return [
             _channel(row) for row in (await self._session.execute(stmt)).scalars().all()
         ]
 
     async def upsert(self, binding: PortalAgentChannel) -> None:
-        existing = await self.get(binding.project_agent_id, binding.channel)
+        existing = await self.get(binding.hub_agent_id, binding.channel)
         if existing is None:
             self._session.add(
                 PortalAgentChannelRow(
                     id=binding.id,
-                    project_agent_id=binding.project_agent_id,
+                    hub_agent_id=binding.hub_agent_id,
                     channel=binding.channel.value,
                     deployment_credential_id=binding.deployment_credential_id,
                 )

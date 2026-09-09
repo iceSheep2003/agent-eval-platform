@@ -2,7 +2,7 @@
 
 两条面：
 - `/portal/*`      —— 展示平台用户（portal cookie）。只读 + 对话。
-- `/portal-admin/*` —— 平台运营者（平台 cookie + `PORTAL_PROVISION`）。供给账号/项目/成员/挂载。
+- `/portal-admin/*` —— 平台运营者（平台 cookie + `PORTAL_PROVISION`）。供给账号/门户/成员/挂载。
 
 对话的线格式是 **OpenAI 兼容分块**，这样前端可以直接用 `@ant-design/x-sdk` 的
 `OpenAIChatProvider`，不必自己写 SSE 解析。
@@ -28,30 +28,30 @@ from ..application.services import (
     AgentView,
     CHAT_LIMIT_PER_MINUTE,
     PortalService,
-    ProjectView,
+    HubView,
     SHADOW_NOTICE,
 )
 from .deps import (
     PortalActor,
     PortalActorDep,
-    ProjectActorDep,
+    HubActorDep,
     clear_portal_cookie,
     get_portal_auth,
     get_portal_service,
-    require_project,
+    require_hub,
     set_portal_cookie,
 )
 from .schemas import (
-    AddProjectMemberRequest,
-    AttachProjectAgentRequest,
+    AddHubMemberRequest,
+    AttachHubAgentRequest,
     BindPortalChannelRequest,
     ChannelViewDTO,
-    CreatePortalProjectRequest,
+    CreatePortalHubRequest,
     CreatePortalUserRequest,
     PortalAgentDTO,
     PortalChatRequest,
     PortalLoginRequest,
-    PortalProjectDTO,
+    PortalHubDTO,
     PortalSessionDTO,
     PortalUserDTO,
     SetPortalUserStatusRequest,
@@ -63,12 +63,12 @@ router = APIRouter(tags=["portal"])
 KEEPALIVE_SECONDS = 15.0
 
 
-def _project_dto(view: ProjectView) -> PortalProjectDTO:
-    return PortalProjectDTO(
-        id=view.project.id,
-        slug=view.project.slug,
-        name=view.project.name,
-        description=view.project.description,
+def _hub_dto(view: HubView) -> PortalHubDTO:
+    return PortalHubDTO(
+        id=view.hub.id,
+        slug=view.hub.slug,
+        name=view.hub.name,
+        description=view.hub.description,
         my_role=view.role,
     )
 
@@ -130,7 +130,7 @@ async def portal_login(
         ip=_client_ip(request),
     )
     set_portal_cookie(response, container, issued.token)
-    projects = await container.portal.list_projects_for_user(issued.user.id)
+    hubs = await container.portal.list_hubs_for_user(issued.user.id)
     return ok(
         PortalSessionDTO(
             user=PortalUserDTO(
@@ -140,7 +140,7 @@ async def portal_login(
                 email=issued.user.email,
                 status=issued.user.status,
             ),
-            projects=[_project_dto(item) for item in projects],
+            hubs=[_hub_dto(item) for item in hubs],
         ).model_dump()
     )
 
@@ -170,7 +170,7 @@ async def portal_me(
     actor: PortalActorDep,
     portal: Annotated[PortalService, Depends(get_portal_service)],
 ) -> dict:
-    projects = await portal.list_projects_for_user(actor.user.id)
+    hubs = await portal.list_hubs_for_user(actor.user.id)
     return ok(
         PortalSessionDTO(
             user=PortalUserDTO(
@@ -180,47 +180,47 @@ async def portal_me(
                 email=actor.user.email,
                 status=actor.user.status,
             ),
-            projects=[_project_dto(item) for item in projects],
+            hubs=[_hub_dto(item) for item in hubs],
         ).model_dump()
     )
 
 
-@router.get("/portal/projects/{project_id}")
-async def portal_project(
-    actor: ProjectActorDep,
+@router.get("/portal/hubs/{hub_id}")
+async def portal_hub(
+    actor: HubActorDep,
     portal: Annotated[PortalService, Depends(get_portal_service)],
 ) -> dict:
-    assert actor.project is not None
+    assert actor.hub is not None
     return ok(
-        PortalProjectDTO(
-            id=actor.project.id,
-            slug=actor.project.slug,
-            name=actor.project.name,
-            description=actor.project.description,
+        PortalHubDTO(
+            id=actor.hub.id,
+            slug=actor.hub.slug,
+            name=actor.hub.name,
+            description=actor.hub.description,
             my_role=actor.role,
         ).model_dump()
     )
 
 
-@router.get("/portal/projects/{project_id}/agents")
+@router.get("/portal/hubs/{hub_id}/agents")
 async def portal_agents(
-    actor: ProjectActorDep,
+    actor: HubActorDep,
     portal: Annotated[PortalService, Depends(get_portal_service)],
 ) -> dict:
-    assert actor.project is not None
-    views = await portal.list_project_agents(actor.project.id, actor.project.workspace_id)
+    assert actor.hub is not None
+    views = await portal.list_hub_agents(actor.hub.id, actor.hub.workspace_id)
     return list_response([_agent_dto(view).model_dump() for view in views])
 
 
-@router.get("/portal/projects/{project_id}/agents/{project_agent_id}")
+@router.get("/portal/hubs/{hub_id}/agents/{hub_agent_id}")
 async def portal_agent(
-    project_agent_id: str,
-    actor: ProjectActorDep,
+    hub_agent_id: str,
+    actor: HubActorDep,
     portal: Annotated[PortalService, Depends(get_portal_service)],
 ) -> dict:
-    assert actor.project is not None
-    view = await portal.get_project_agent(
-        project_agent_id, actor.project.id, actor.project.workspace_id
+    assert actor.hub is not None
+    view = await portal.get_hub_agent(
+        hub_agent_id, actor.hub.id, actor.hub.workspace_id
     )
     return ok(_agent_dto(view).model_dump())
 
@@ -262,19 +262,19 @@ def _as_text(value: object) -> str:
         return str(value)
 
 
-@router.post("/portal/projects/{project_id}/agents/{project_agent_id}/channels/{channel}/chat")
+@router.post("/portal/hubs/{hub_id}/agents/{hub_agent_id}/channels/{channel}/chat")
 async def portal_chat(
-    project_agent_id: str,
+    hub_agent_id: str,
     channel: Channel,
     payload: PortalChatRequest,
     request: Request,
-    actor: Annotated[PortalActor, Depends(require_project("agent:chat"))],
+    actor: Annotated[PortalActor, Depends(require_hub("agent:chat"))],
     portal: Annotated[PortalService, Depends(get_portal_service)],
     container: Annotated[Container, Depends(get_container)],
 ):
-    assert actor.project is not None
-    project = actor.project
-    model = f"{project_agent_id}@{channel.value}"
+    assert actor.hub is not None
+    hub = actor.hub
+    model = f"{hub_agent_id}@{channel.value}"
     message = payload.resolved_message()
     if not message.strip():
         raise DomainError(Errors.VALIDATION_FAILED, "对话内容为空")
@@ -288,9 +288,9 @@ async def portal_chat(
             action="portal.chat",
             actor_kind="portal_user",
             actor_id=actor.user.id,
-            workspace_id=project.workspace_id,
+            workspace_id=hub.workspace_id,
             target_kind="portal_agent",
-            target_id=project_agent_id,
+            target_id=hub_agent_id,
             detail={"channel": channel.value, "rejected": "rate_limited"},
             ip=_client_ip(request),
         )
@@ -303,18 +303,18 @@ async def portal_chat(
         action="portal.chat",
         actor_kind="portal_user",
         actor_id=actor.user.id,
-        workspace_id=project.workspace_id,
+        workspace_id=hub.workspace_id,
         target_kind="portal_agent",
-        target_id=project_agent_id,
+        target_id=hub_agent_id,
         detail={"channel": channel.value, "stream": payload.stream},
         ip=_client_ip(request),
     )
 
     if not payload.stream:
         result = await portal.chat(
-            project_agent_id=project_agent_id,
-            project_id=project.id,
-            workspace_id=project.workspace_id,
+            hub_agent_id=hub_agent_id,
+            hub_id=hub.id,
+            workspace_id=hub.workspace_id,
             channel=channel,
             message=message,
             messages=payload.messages,
@@ -322,7 +322,7 @@ async def portal_chat(
         )
         return ok(
             {
-                "id": f"chatcmpl-{project_agent_id}",
+                "id": f"chatcmpl-{hub_agent_id}",
                 "object": "chat.completion",
                 "model": model,
                 "channel": channel.value,
@@ -346,7 +346,7 @@ async def portal_chat(
         """**生成器必须自己兜住所有异常**——响应头一旦发出，
         `app/api/errors.py` 的全局 handler 就再也修不了这条流了。"""
         created = int(container.clock.now().timestamp())
-        chunk_id = f"chatcmpl-{project_agent_id}"
+        chunk_id = f"chatcmpl-{hub_agent_id}"
         # 先发角色帧，让前端的空气泡立刻出现，不必等被测 Agent 跑完。
         yield _chunk(
             chunk_id=chunk_id,
@@ -357,9 +357,9 @@ async def portal_chat(
 
         task = asyncio.create_task(
             portal.chat(
-                project_agent_id=project_agent_id,
-                project_id=project.id,
-                workspace_id=project.workspace_id,
+                hub_agent_id=hub_agent_id,
+                hub_id=hub.id,
+                workspace_id=hub.workspace_id,
                 channel=channel,
                 message=message,
                 messages=payload.messages,
@@ -544,15 +544,15 @@ async def list_portal_users(
     )
 
 
-@router.post("/portal-admin/projects")
-async def create_portal_project(
-    payload: CreatePortalProjectRequest,
+@router.post("/portal-admin/hubs")
+async def create_portal_hub(
+    payload: CreatePortalHubRequest,
     request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
     _assert_provision(container, actor)
-    project = await container.portal.create_project(
+    hub = await container.portal.create_hub(
         workspace_id=actor.workspace_id,
         slug=payload.slug,
         name=payload.name,
@@ -560,34 +560,34 @@ async def create_portal_project(
         created_by=actor.user_id,
     )
     await container.audit.record(
-        action="portal_admin.project.create",
+        action="portal_admin.hub.create",
         actor_kind="platform_user",
         actor_id=actor.user_id,
         workspace_id=actor.workspace_id,
-        target_kind="portal_project",
-        target_id=project.id,
-        detail={"slug": project.slug},
+        target_kind="portal_hub",
+        target_id=hub.id,
+        detail={"slug": hub.slug},
         ip=_client_ip(request),
     )
     return ok(
-        PortalProjectDTO(
-            id=project.id,
-            slug=project.slug,
-            name=project.name,
-            description=project.description,
+        PortalHubDTO(
+            id=hub.id,
+            slug=hub.slug,
+            name=hub.name,
+            description=hub.description,
         ).model_dump()
     )
 
 
-@router.get("/portal-admin/projects/{project_id}/members")
-async def list_project_members(
-    project_id: str,
+@router.get("/portal-admin/hubs/{hub_id}/members")
+async def list_hub_members(
+    hub_id: str,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
     _assert_provision(container, actor)
-    await container.portal.get_project(project_id, actor.workspace_id)
-    members = await container.portal.list_members(project_id)
+    await container.portal.get_hub(hub_id, actor.workspace_id)
+    members = await container.portal.list_members(hub_id)
     return list_response(
         [
             {"id": item.id, "portal_user_id": item.portal_user_id, "role": item.role}
@@ -596,18 +596,18 @@ async def list_project_members(
     )
 
 
-@router.post("/portal-admin/projects/{project_id}/members")
-async def add_project_member(
-    project_id: str,
-    payload: AddProjectMemberRequest,
+@router.post("/portal-admin/hubs/{hub_id}/members")
+async def add_hub_member(
+    hub_id: str,
+    payload: AddHubMemberRequest,
     request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
     _assert_provision(container, actor)
-    await container.portal.get_project(project_id, actor.workspace_id)
+    await container.portal.get_hub(hub_id, actor.workspace_id)
     member = await container.portal.add_member(
-        project_id=project_id,
+        hub_id=hub_id,
         portal_user_id=payload.portal_user_id,
         role=payload.role,
     )
@@ -616,8 +616,8 @@ async def add_project_member(
         actor_kind="platform_user",
         actor_id=actor.user_id,
         workspace_id=actor.workspace_id,
-        target_kind="portal_project",
-        target_id=project_id,
+        target_kind="portal_hub",
+        target_id=hub_id,
         detail={"portal_user_id": payload.portal_user_id, "role": payload.role},
         ip=_client_ip(request),
     )
@@ -626,42 +626,42 @@ async def add_project_member(
     )
 
 
-@router.delete("/portal-admin/projects/{project_id}/members/{member_id}")
-async def remove_project_member(
-    project_id: str,
+@router.delete("/portal-admin/hubs/{hub_id}/members/{member_id}")
+async def remove_hub_member(
+    hub_id: str,
     member_id: str,
     request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
     _assert_provision(container, actor)
-    await container.portal.get_project(project_id, actor.workspace_id)
+    await container.portal.get_hub(hub_id, actor.workspace_id)
     await container.portal.remove_member(member_id)
     await container.audit.record(
         action="portal_admin.member.remove",
         actor_kind="platform_user",
         actor_id=actor.user_id,
         workspace_id=actor.workspace_id,
-        target_kind="portal_project",
-        target_id=project_id,
+        target_kind="portal_hub",
+        target_id=hub_id,
         detail={"member_id": member_id},
         ip=_client_ip(request),
     )
     return ok({"ok": True})
 
 
-@router.post("/portal-admin/projects/{project_id}/agents")
-async def attach_project_agent(
-    project_id: str,
-    payload: AttachProjectAgentRequest,
+@router.post("/portal-admin/hubs/{hub_id}/agents")
+async def attach_hub_agent(
+    hub_id: str,
+    payload: AttachHubAgentRequest,
     request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
     _assert_provision(container, actor)
-    await container.portal.get_project(project_id, actor.workspace_id)
-    project_agent = await container.portal.attach_agent(
-        project_id=project_id,
+    await container.portal.get_hub(hub_id, actor.workspace_id)
+    hub_agent = await container.portal.attach_agent(
+        hub_id=hub_id,
         workspace_id=actor.workspace_id,
         asset_id=payload.asset_id,
         display_name=payload.display_name,
@@ -671,30 +671,30 @@ async def attach_project_agent(
         actor_kind="platform_user",
         actor_id=actor.user_id,
         workspace_id=actor.workspace_id,
-        target_kind="portal_project",
-        target_id=project_id,
-        detail={"asset_id": payload.asset_id, "portal_agent_id": project_agent.id},
+        target_kind="portal_hub",
+        target_id=hub_id,
+        detail={"asset_id": payload.asset_id, "portal_agent_id": hub_agent.id},
         ip=_client_ip(request),
     )
     return ok(
         {
-            "id": project_agent.id,
-            "asset_id": project_agent.asset_id,
-            "display_name": project_agent.display_name,
+            "id": hub_agent.id,
+            "asset_id": hub_agent.asset_id,
+            "display_name": hub_agent.display_name,
         }
     )
 
 
-@router.post("/portal-admin/agents/{project_agent_id}/channels/{channel}/bind")
+@router.post("/portal-admin/agents/{hub_agent_id}/channels/{channel}/bind")
 async def bind_portal_channel(
-    project_agent_id: str,
+    hub_agent_id: str,
     channel: Channel,
     payload: BindPortalChannelRequest,
     request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
-    """把一把 `evl_` 部署密钥挂到项目 Agent 的某个通道上。
+    """把一把 `evl_` 部署密钥挂到门户 Agent 的某个通道上。
 
     密钥本身由 `POST /api/agents/{id}/deployment-keys` 签发——portal 只存引用。
     """
@@ -709,7 +709,7 @@ async def bind_portal_channel(
             f"该密钥只允许用于 {target.channel.value} 通道",
         )
     binding = await container.portal.bind_channel(
-        project_agent_id=project_agent_id,
+        hub_agent_id=hub_agent_id,
         channel=channel,
         deployment_credential_id=payload.deployment_credential_id,
     )
@@ -719,7 +719,7 @@ async def bind_portal_channel(
         actor_id=actor.user_id,
         workspace_id=actor.workspace_id,
         target_kind="portal_agent",
-        target_id=project_agent_id,
+        target_id=hub_agent_id,
         detail={
             "channel": channel.value,
             "deployment_credential_id": payload.deployment_credential_id,
@@ -729,7 +729,7 @@ async def bind_portal_channel(
     return ok(
         {
             "id": binding.id,
-            "project_agent_id": binding.project_agent_id,
+            "hub_agent_id": binding.hub_agent_id,
             "channel": binding.channel.value,
             "deployment_credential_id": binding.deployment_credential_id,
         }

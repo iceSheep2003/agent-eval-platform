@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from backend.app.modules.portal.domain.models import ProjectMember
+from backend.app.modules.portal.domain.models import HubMember
 from backend.app.modules.portal.domain.permission import (
     AGENT_CHAT,
     PROJECT_READ,
@@ -15,10 +15,10 @@ from backend.app.shared.passwords import hash_password, verify_password
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def _member(project_id: str = "pp_1", role: str = "member") -> ProjectMember:
-    return ProjectMember(
+def _member(hub_id: str = "pp_1", role: str = "member") -> HubMember:
+    return HubMember(
         id="pm_1",
-        project_id=project_id,
+        hub_id=hub_id,
         portal_user_id="pu_1",
         role=role,  # type: ignore[arg-type]
         created_at=NOW,
@@ -40,14 +40,14 @@ def test_non_member_is_denied() -> None:
     assert not decision.allowed
 
 
-def test_membership_of_another_project_is_denied() -> None:
-    """拿着 A 项目的成员身份访问 B 项目必须被拒。"""
-    decision = decide_portal(_member(project_id="pp_1"), PROJECT_READ, "pp_2")
+def test_membership_of_another_hub_is_denied() -> None:
+    """拿着 A 门户的成员身份访问 B 门户必须被拒。"""
+    decision = decide_portal(_member(hub_id="pp_1"), PROJECT_READ, "pp_2")
     assert not decision.allowed
 
 
 def test_unknown_action_is_denied() -> None:
-    assert not decide_portal(_member(role="owner"), "project:delete", "pp_1").allowed
+    assert not decide_portal(_member(role="owner"), "hub:delete", "pp_1").allowed
 
 
 def test_password_roundtrip() -> None:

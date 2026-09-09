@@ -26,7 +26,7 @@ const roleConfig: BubbleListProps['role'] = {
 };
 
 export default function AgentChatPage() {
-  const { projectId = '', agentId = '' } = useParams();
+  const { hubId = '', agentId = '' } = useParams();
   const [agent, setAgent] = useState<PortalAgent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +36,7 @@ export default function AgentChatPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    getAgent(projectId, agentId)
+    getAgent(hubId, agentId)
       .then((next) => {
         if (cancelled) return;
         setAgent(next);
@@ -54,7 +54,7 @@ export default function AgentChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [projectId, agentId]);
+  }, [hubId, agentId]);
 
   const activeChannel = agent?.channels.find((item) => item.channel === channel);
   const bound = Boolean(activeChannel?.bound);
@@ -62,14 +62,14 @@ export default function AgentChatPage() {
   const provider = useMemo(
     () =>
       new OpenAIChatProvider({
-        request: XRequest(chatUrl(projectId, agentId, channel), {
+        request: XRequest(chatUrl(hubId, agentId, channel), {
           manual: true,
           credentials: 'include',
           params: { model: agentId, stream: true },
         }),
       }) as never,
     // 通道变了就换一个 provider——否则会把上一通道的上下文带过去
-    [projectId, agentId, channel],
+    [hubId, agentId, channel],
   );
 
   const { onRequest, abort, isRequesting, messages } = useXChat<ChatMessage, ChatMessage>({
@@ -103,7 +103,7 @@ export default function AgentChatPage() {
 
   return (
     <div className="page chat-page">
-      <Link to={`/projects/${projectId}`} className="back-link">
+      <Link to={`/hubs/${hubId}`} className="back-link">
         <ArrowLeftOutlined /> 返回 Agent 列表
       </Link>
 

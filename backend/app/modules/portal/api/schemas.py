@@ -1,4 +1,4 @@
-"""portal 的 HTTP DTO。字段名对齐展示平台前端的 `PortalProject` / `PortalAgent`。"""
+"""portal 的 HTTP DTO。字段名对齐展示平台前端的 `PortalHub` / `PortalAgent`。"""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class SetPortalUserStatusRequest(BaseModel):
     status: Literal["active", "disabled"]
 
 
-class PortalProjectDTO(BaseModel):
+class PortalHubDTO(BaseModel):
     id: str
     slug: str
     name: str
@@ -36,7 +36,7 @@ class PortalProjectDTO(BaseModel):
 
 class PortalSessionDTO(BaseModel):
     user: PortalUserDTO
-    projects: list[PortalProjectDTO]
+    hubs: list[PortalHubDTO]
 
 
 class ChannelViewDTO(BaseModel):
@@ -91,18 +91,18 @@ class CreatePortalUserRequest(BaseModel):
     password: str = Field(min_length=8, max_length=256)
 
 
-class CreatePortalProjectRequest(BaseModel):
+class CreatePortalHubRequest(BaseModel):
     slug: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=128)
     description: str = Field(default="", max_length=512)
 
 
-class AddProjectMemberRequest(BaseModel):
+class AddHubMemberRequest(BaseModel):
     portal_user_id: str = Field(min_length=1, max_length=64)
     role: Literal["owner", "member"] = "member"
 
 
-class AttachProjectAgentRequest(BaseModel):
+class AttachHubAgentRequest(BaseModel):
     asset_id: str = Field(min_length=1, max_length=64)
     display_name: str = Field(default="", max_length=128)
 

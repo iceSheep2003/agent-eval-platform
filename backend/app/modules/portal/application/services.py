@@ -1,8 +1,8 @@
-"""portal 用例：账号、项目、成员、Agent 挂载、按通道对话。
+"""portal 用例：账号、门户、成员、Agent 挂载、按通道对话。
 
 两套服务分开是因为它们的**鉴权主体不同**：
 `PortalAuthService` 处理「谁能登录」，`PortalService` 处理「登录后能看/能做什么」。
-后者所有方法都以 `project_id` 为一等参数——项目是展示平台的可见性边界。
+后者所有方法都以 `hub_id` 为一等参数——门户是展示平台的可见性边界。
 """
 
 from __future__ import annotations
@@ -28,24 +28,24 @@ from ..domain.models import (
     AuditActorKind,
     AuditEntry,
     PortalAgentChannel,
-    PortalProject,
+    PortalHub,
     PortalUser,
-    ProjectAgent,
-    ProjectMember,
-    ProjectRole,
+    HubAgent,
+    HubMember,
+    HubRole,
 )
 from ..infrastructure.repositories import (
     AuditRepository,
     PortalAgentChannelRepository,
-    PortalProjectRepository,
+    PortalHubRepository,
     PortalSessionRepository,
     PortalUserRepository,
-    ProjectAgentRepository,
-    ProjectMemberRepository,
+    HubAgentRepository,
+    HubMemberRepository,
     RateLimitRepository,
 )
 
-#: 项目角色的合法取值，用于在应用层挡住拼错的角色名。
+#: 门户角色的合法取值，用于在应用层挡住拼错的角色名。
 _ROLES: frozenset[str] = frozenset({"owner", "member"})
 
 logger = logging.getLogger(__name__)
@@ -68,11 +68,11 @@ class IssuedSession:
 
 
 @dataclass(frozen=True, slots=True)
-class ProjectView:
-    """项目 + 当前用户在该项目里的角色。"""
+class HubView:
+    """门户 + 当前用户在该门户里的角色。"""
 
-    project: PortalProject
-    role: ProjectRole
+    hub: PortalHub
+    role: HubRole
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,9 +224,9 @@ class PortalAuthService:
                 await sessions.delete(session.id)
                 await uow.commit()
 
-    async def membership(self, project_id: str, portal_user_id: str) -> ProjectMember | None:
+    async def membership(self, hub_id: str, portal_user_id: str) -> HubMember | None:
         async with UnitOfWork(self._db) as uow:
-            return await ProjectMemberRepository(uow.session).get(project_id, portal_user_id)
+            return await HubMemberRepository(uow.session).get(hub_id, portal_user_id)
 
 
 #: 对话频率上限：每个 portal 用户每分钟多少次。对话是对 RuntimePort 的无界扇出，
@@ -336,9 +336,9 @@ class PortalService:
         self._assets = assets
         self._invoke = invoke
 
-    # -- 项目 ----------------------------------------------------------------
+    # -- 门户 ----------------------------------------------------------------
 
-    async def create_project(
+    async def create_hub(
         self,
         *,
         workspace_id: str,
@@ -346,14 +346,14 @@ class PortalService:
         name: str,
         description: str = "",
         created_by: str,
-    ) -> PortalProject:
+    ) -> PortalHub:
         async with UnitOfWork(self._db) as uow:
-            projects = PortalProjectRepository(uow.session)
-            existing = await projects.find_by_slug(workspace_id, slug)
+            hubs = PortalHubRepository(uow.session)
+            existing = await hubs.find_by_slug(workspace_id, slug)
             if existing is not None:
                 return existing
-            project = PortalProject(
-                id=new_id("portal_project"),
+            hub = PortalHub(
+                id=new_id("portal_hub"),
                 workspace_id=workspace_id,
                 slug=slug,
                 name=name,
@@ -362,49 +362,49 @@ class PortalService:
                 created_by=created_by,
                 created_at=self._clock.now(),
             )
-            projects.add(project)
+            hubs.add(hub)
             await uow.commit()
-        return project
+        return hub
 
-    async def get_project(self, project_id: str, workspace_id: str) -> PortalProject:
+    async def get_hub(self, hub_id: str, workspace_id: str) -> PortalHub:
         async with UnitOfWork(self._db) as uow:
-            project = await PortalProjectRepository(uow.session).get(project_id, workspace_id)
-        if project is None:
-            raise NotFound("项目", project_id)
-        return project
+            hub = await PortalHubRepository(uow.session).get(hub_id, workspace_id)
+        if hub is None:
+            raise NotFound("门户", hub_id)
+        return hub
 
-    async def get_project_unscoped(self, project_id: str) -> PortalProject:
-        """按 ID 取项目，**不限定工作区**。
+    async def get_hub_unscoped(self, hub_id: str) -> PortalHub:
+        """按 ID 取门户，**不限定工作区**。
 
-        只给 portal 侧用：那里还没有 workspace_id（它由项目自身决定），
+        只给 portal 侧用：那里还没有 workspace_id（它由门户自身决定），
         而调用方已经过了成员校验——成员资格才是那条链上的授权依据。
         """
         async with UnitOfWork(self._db) as uow:
-            project = await PortalProjectRepository(uow.session).get_any(project_id)
-        if project is None:
-            raise NotFound("项目", project_id)
-        return project
+            hub = await PortalHubRepository(uow.session).get_any(hub_id)
+        if hub is None:
+            raise NotFound("门户", hub_id)
+        return hub
 
-    async def list_projects_for_user(self, portal_user_id: str) -> Sequence[ProjectView]:
+    async def list_hubs_for_user(self, portal_user_id: str) -> Sequence[HubView]:
         async with UnitOfWork(self._db) as uow:
-            rows = await PortalProjectRepository(uow.session).list_for_user(portal_user_id)
-        return [ProjectView(project=item, role=role) for item, role in rows]
+            rows = await PortalHubRepository(uow.session).list_for_user(portal_user_id)
+        return [HubView(hub=item, role=role) for item, role in rows]
 
     # -- 成员 ----------------------------------------------------------------
 
     async def add_member(
-        self, *, project_id: str, portal_user_id: str, role: ProjectRole = "member"
-    ) -> ProjectMember:
+        self, *, hub_id: str, portal_user_id: str, role: HubRole = "member"
+    ) -> HubMember:
         if role not in _ROLES:
-            raise DomainError(Errors.VALIDATION_FAILED, f"未知项目角色 {role!r}")
+            raise DomainError(Errors.VALIDATION_FAILED, f"未知门户角色 {role!r}")
         async with UnitOfWork(self._db) as uow:
-            members = ProjectMemberRepository(uow.session)
-            existing = await members.get(project_id, portal_user_id)
+            members = HubMemberRepository(uow.session)
+            existing = await members.get(hub_id, portal_user_id)
             if existing is not None:
                 return existing
-            member = ProjectMember(
-                id=new_id("portal_member"),
-                project_id=project_id,
+            member = HubMember(
+                id=new_id("portal_hub_member"),
+                hub_id=hub_id,
                 portal_user_id=portal_user_id,
                 role=role,
                 created_at=self._clock.now(),
@@ -413,13 +413,13 @@ class PortalService:
             await uow.commit()
         return member
 
-    async def list_members(self, project_id: str) -> Sequence[ProjectMember]:
+    async def list_members(self, hub_id: str) -> Sequence[HubMember]:
         async with UnitOfWork(self._db) as uow:
-            return list(await ProjectMemberRepository(uow.session).list_for_project(project_id))
+            return list(await HubMemberRepository(uow.session).list_for_hub(hub_id))
 
     async def remove_member(self, member_id: str) -> None:
         async with UnitOfWork(self._db) as uow:
-            await ProjectMemberRepository(uow.session).remove(member_id)
+            await HubMemberRepository(uow.session).remove(member_id)
             await uow.commit()
 
     # -- Agent 挂载 ----------------------------------------------------------
@@ -427,42 +427,42 @@ class PortalService:
     async def attach_agent(
         self,
         *,
-        project_id: str,
+        hub_id: str,
         workspace_id: str,
         asset_id: str,
         display_name: str = "",
-    ) -> ProjectAgent:
-        """把一个平台资产挂进项目。**先确认它在本工作区存在**，避免挂上别人的 Agent。"""
+    ) -> HubAgent:
+        """把一个平台资产挂进门户。**先确认它在本工作区存在**，避免挂上别人的 Agent。"""
         asset = await self._assets.get_asset(asset_id, workspace_id)
         if asset is None:
             raise NotFound("Agent", asset_id)
         async with UnitOfWork(self._db) as uow:
-            agents = ProjectAgentRepository(uow.session)
-            existing = await agents.find(project_id, asset_id)
+            agents = HubAgentRepository(uow.session)
+            existing = await agents.find(hub_id, asset_id)
             if existing is not None:
                 return existing
-            project_agent = ProjectAgent(
+            hub_agent = HubAgent(
                 id=new_id("portal_agent"),
-                project_id=project_id,
+                hub_id=hub_id,
                 asset_id=asset_id,
                 display_name=display_name or asset.name,
                 sort_order=0,
                 created_at=self._clock.now(),
             )
-            agents.add(project_agent)
+            agents.add(hub_agent)
             await uow.commit()
-        return project_agent
+        return hub_agent
 
     async def bind_channel(
         self,
         *,
-        project_agent_id: str,
+        hub_agent_id: str,
         channel: Channel,
         deployment_credential_id: str,
     ) -> PortalAgentChannel:
         binding = PortalAgentChannel(
             id=new_id("portal_channel"),
-            project_agent_id=project_agent_id,
+            hub_agent_id=hub_agent_id,
             channel=channel,
             deployment_credential_id=deployment_credential_id,
             created_at=self._clock.now(),
@@ -472,11 +472,11 @@ class PortalService:
             await uow.commit()
         return binding
 
-    async def list_project_agents(
-        self, project_id: str, workspace_id: str
+    async def list_hub_agents(
+        self, hub_id: str, workspace_id: str
     ) -> Sequence[AgentView]:
         async with UnitOfWork(self._db) as uow:
-            rows = await ProjectAgentRepository(uow.session).list_for_project(project_id)
+            rows = await HubAgentRepository(uow.session).list_for_hub(hub_id)
             channels = {
                 row.id: await PortalAgentChannelRepository(uow.session).list_for_agent(row.id)
                 for row in rows
@@ -486,13 +486,13 @@ class PortalService:
             for row in rows
         ]
 
-    async def get_project_agent(
-        self, project_agent_id: str, project_id: str, workspace_id: str
+    async def get_hub_agent(
+        self, hub_agent_id: str, hub_id: str, workspace_id: str
     ) -> AgentView:
         async with UnitOfWork(self._db) as uow:
-            row = await ProjectAgentRepository(uow.session).get(project_agent_id)
-            if row is None or row.project_id != project_id:
-                raise NotFound("项目 Agent", project_agent_id)
+            row = await HubAgentRepository(uow.session).get(hub_agent_id)
+            if row is None or row.hub_id != hub_id:
+                raise NotFound("门户 Agent", hub_agent_id)
             bindings = list(
                 await PortalAgentChannelRepository(uow.session).list_for_agent(row.id)
             )
@@ -500,7 +500,7 @@ class PortalService:
 
     async def _agent_view(
         self,
-        row: ProjectAgent,
+        row: HubAgent,
         workspace_id: str,
         bindings: Sequence[PortalAgentChannel],
     ) -> AgentView:
@@ -536,8 +536,8 @@ class PortalService:
     async def chat(
         self,
         *,
-        project_agent_id: str,
-        project_id: str,
+        hub_agent_id: str,
+        hub_id: str,
         workspace_id: str,
         channel: Channel,
         message: str,
@@ -546,14 +546,14 @@ class PortalService:
     ) -> InvokeResult:
         """按通道打一次。**版本由通道解析**，调用方给不了版本号。"""
         async with UnitOfWork(self._db) as uow:
-            row = await ProjectAgentRepository(uow.session).get(project_agent_id)
-            if row is None or row.project_id != project_id:
-                raise NotFound("项目 Agent", project_agent_id)
+            row = await HubAgentRepository(uow.session).get(hub_agent_id)
+            if row is None or row.hub_id != hub_id:
+                raise NotFound("门户 Agent", hub_agent_id)
             binding = await PortalAgentChannelRepository(uow.session).get(row.id, channel)
         if binding is None or binding.deployment_credential_id is None:
             raise DomainError(
                 Errors.CHANNEL_UNBOUND,
-                f"该项目尚未为 {channel.value} 通道配置调用密钥",
+                f"该门户尚未为 {channel.value} 通道配置调用密钥",
                 channel=channel.value,
             )
         # **引用有效 ≠ 钥匙有效**：撤销/过期必须当场挡住，不能等网关报错。
@@ -608,6 +608,6 @@ __all__ = [
     "PortalAuthService",
     "PortalRateLimiter",
     "PortalService",
-    "ProjectView",
+    "HubView",
     "SHADOW_NOTICE",
 ]

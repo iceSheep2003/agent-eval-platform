@@ -35,7 +35,7 @@ export default function LoginPage() {
           Eval Loom 展示平台
         </Typography.Title>
         <Typography.Paragraph type="secondary">
-          登录后查看你所在项目的 Agent，并与指定通道的版本对话。
+          登录后查看你所在门户的 Agent，并与指定通道的版本对话。
         </Typography.Paragraph>
         {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
         <Form<LoginForm> layout="vertical" onFinish={onFinish} requiredMark={false}>
