@@ -8,3 +8,9 @@ build/
 *.egg-info/
 frontend/node_modules/
 frontend/*.tsbuildinfo
+frontend-pro/node_modules/
+frontend-pro/.umi/
+frontend-pro/.umi-production/
+frontend-pro/dist/
+.DS_Store
+.claude/

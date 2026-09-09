@@ -11,7 +11,7 @@
 | --- | --- | --- |
 | **M0** | 骨架 + 认证 + 权限 + 队列基线 + Alembic | ✅ 完成（63 tests） |
 | **M1** | SDK 上报闭环（asset + observability + ingest） | ✅ 完成 |
-| **M2** | 数据集 + 评测策略 | ⬜ 未开始 |
+| **M2** | 数据集 + 评测策略 | ⬜ 未开始（数据模型见 [backend-dataset.md](backend-dataset.md)） |
 | **M3** | 评测执行闭环（Run/Trial/Worker） | ⬜ 未开始 |
 | **M4** | 证据回流 + 前端接真数据 | ⬜ 未开始 |
 | **M5** | 发布控制（P1） | ⬜ 未开始 |
@@ -84,6 +84,9 @@ ALEMBIC_MODULE=asset .venv/bin/python -m alembic -c backend/alembic.ini \
 | 契约生长 | 随消费方生长 + `test_no_unused_contracts` 强制 | 反对预冻结，见 `docs/backend-contracts.md` §14 |
 | SDK 兼容 | 平台侧写适配器，**不改 SDK 事件形状** | SDK 已在跑；且 `asset_id`/`tenant_id` 只能从 `evk_` 反查，不信 body |
 | 响应封装 | `{success, data}` + 前端 `dataField: 'data'` | 前端页面直接读 `result.items` |
+| 数据集维度 | **四个正交维度**：origin / purpose / task_shape / stages | 需求说明 §12.3 指出「来源」与「任务形态」不能混在一个枚举里 |
+| 数据集样本 | 三段式 `raw` / `task` / `private` | `private`（expected_output / hidden_state / verifier）永不进 Agent 输入 |
+| 回流 | 草稿样本 → 复核 → **固化新版本**，带血缘与去重 | 已固化版本不可变（需求说明 §9.3） |
 | 路径前缀 | `/api/*` 兼容面 + `/api/v1/*` 别名；`/v1/*` 机器面 | 前端与 `register.py` 已在用 `/api/*` |
 | 队列 | 事务性 Outbox 先行，MQ 只作派发优化 | 业务写入与入队必须原子 |
 | 探针 | `/api/live`（liveness，不碰 DB）+ `/api/health`（readiness，查 DB） | DB 抖动不该重启 pod |
