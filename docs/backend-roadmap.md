@@ -87,9 +87,11 @@ ALEMBIC_MODULE=asset .venv/bin/python -m alembic -c backend/alembic.ini \
 | 数据集维度 | **四个正交维度**：origin / purpose / task_shape / stages | 需求说明 §12.3 指出「来源」与「任务形态」不能混在一个枚举里 |
 | 数据集样本 | 三段式 `raw` / `task` / `private` | `private`（expected_output / hidden_state / verifier）永不进 Agent 输入 |
 | 回流 | 草稿样本 → 复核 → **固化新版本**，带血缘与去重 | 已固化版本不可变（需求说明 §9.3） |
-| 回流自动化 | **机器挖 + 人把关**：badcase 挖掘 Agent 只能写草稿样本，不能复核、不能晋级 | 权限在 `Authorizer.MACHINE_FORBIDDEN` 里硬性收窄 |
-| 回流标注 | LLM 起草 + 人工确认；未确认草稿不得进 `purpose=gate` 数据集 | 门禁判据必须有人背书 |
+| 回流自动化 | **机器挖 + 人把关**（**P0 不实现**，设计见 backend-dataset.md §7） | 权限在 `Authorizer.MACHINE_FORBIDDEN` 里硬性收窄 |
+| 回流标注 | LLM 起草 + 人工确认（**P0 不实现**） | 门禁判据必须有人背书 |
 | 数据集 stages | **硬约束**：策略绑定时校验 `template.stage ∈ dataset.stages` | 防止宽松样本污染发布门禁 |
+| 数据集混合 | 一个版本**允许**混合 `task_shape` / `protocol`，比较时分组下钻 | 强求同质会逼出「一个数据集拆成好几个」的伪需求 |
+| 跨租户样本 | **可以直接共用** | 复用率高；代价是评测时注意样本来源 |
 | 前端 | **`frontend-pro` 是唯一前端**；旧 `frontend/` 已移除，其 6 份设计文档移至 `docs/legacy-frontend/` | 旧前端原型已废弃 |
 | 路径前缀 | `/api/*` 兼容面 + `/api/v1/*` 别名；`/v1/*` 机器面 | 前端与 `register.py` 已在用 `/api/*` |
 | 队列 | 事务性 Outbox 先行，MQ 只作派发优化 | 业务写入与入队必须原子 |
