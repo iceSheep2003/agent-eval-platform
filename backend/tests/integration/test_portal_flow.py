@@ -17,6 +17,7 @@ import httpx
 from backend.app.container import Container
 from backend.app.contracts.common import Channel, CredentialKind
 from backend.app.main import create_app
+from backend.app.modules.portal.application.services import CHAT_LIMIT_PER_MINUTE
 from backend.app.seed import seed
 from backend.app.settings import Settings
 from backend.app.shared.clock import FixedClock
@@ -237,6 +238,35 @@ async def _scenario(tmp_path) -> None:
             )
             assert contents == "shadow:你好"
 
+            # -- 限流：超过每分钟上限后 429，而不是把执行面打满 ----------------
+            chat_path = (
+                f"/api/portal/projects/{project_id}/agents/{portal_agent_id}"
+                f"/channels/live/chat"
+            )
+            codes = [chat.status_code]
+            for _ in range(CHAT_LIMIT_PER_MINUTE + 2):
+                codes.append(
+                    (await client.post(chat_path, json={"message": "hi"})).status_code
+                )
+                if codes[-1] == 429:
+                    break
+            assert codes[-1] == 429, f"没有触发限流：{codes}"
+            assert codes.count(429) == 1, "限流后应持续拒绝，而不是偶尔放行"
+
+            # -- 审计：登录、供给、对话都留痕 --------------------------------
+            audit = await client.get("/api/portal-admin/audit?limit=200")
+            assert audit.status_code == 200, audit.text
+            actions = {item["action"] for item in audit.json()["data"]["items"]}
+            assert {
+                "portal.login",
+                "portal.chat",
+                "portal_admin.user.create",
+                "portal_admin.project.create",
+                "portal_admin.member.add",
+                "portal_admin.agent.attach",
+                "portal_admin.channel.bind",
+            } <= actions, actions
+
             # -- 非成员：404 而不是 403 -------------------------------------
             await client.post("/api/portal/auth/logout")
             bob_login = await client.post(
@@ -248,6 +278,8 @@ async def _scenario(tmp_path) -> None:
             assert forbidden.status_code == 404
 
         # -- 撤销凭证 → 对话失效 -------------------------------------------
+        # 先把限流窗口推过去，否则这里会先撞 429 而不是我们想验的 401
+        clock.advance(seconds=61)
         await container.assets.revoke_credential(credential_id, workspace_id)
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test"

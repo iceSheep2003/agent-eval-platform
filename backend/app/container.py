@@ -18,7 +18,12 @@ from .runtime_adapters.local_sandbox import LocalSandboxRuntime
 from .modules.identity.application.services import IdentityService
 from .modules.identity.domain.authorizer import Authorizer
 from .modules.observability.application.services import TraceService
-from .modules.portal.application.services import PortalAuthService, PortalService
+from .modules.portal.application.services import (
+    AuditService,
+    PortalAuthService,
+    PortalRateLimiter,
+    PortalService,
+)
 from .persistence import CommandQueue, Database, QueueConfig, create_engine
 from .settings import Settings
 from .shared.clock import Clock, SystemClock
@@ -41,6 +46,8 @@ class Container:
     traces: TraceService
     portal_auth: PortalAuthService
     portal: PortalService
+    portal_limiter: PortalRateLimiter
+    audit: AuditService
     command_queue: CommandQueue
 
     @classmethod
@@ -78,6 +85,8 @@ class Container:
             database, resolved_clock, session_hours=resolved.portal_session_hours
         )
         portal = PortalService(database, resolved_clock, assets, invoke)
+        portal_limiter = PortalRateLimiter(database, resolved_clock)
+        audit = AuditService(database, resolved_clock)
         command_queue = CommandQueue(
             database,
             resolved_clock,
@@ -102,6 +111,8 @@ class Container:
             traces=traces,
             portal_auth=portal_auth,
             portal=portal,
+            portal_limiter=portal_limiter,
+            audit=audit,
             command_queue=command_queue,
         )
 

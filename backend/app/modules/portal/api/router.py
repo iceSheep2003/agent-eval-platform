@@ -24,7 +24,13 @@ from ....contracts.errors import DomainError, Errors, NotFound
 from ....contracts.execution import ChannelInvocation
 from ....contracts.identity import Permission
 from ....schemas.response import list_response, ok
-from ..application.services import AgentView, PortalService, ProjectView, SHADOW_NOTICE
+from ..application.services import (
+    AgentView,
+    CHAT_LIMIT_PER_MINUTE,
+    PortalService,
+    ProjectView,
+    SHADOW_NOTICE,
+)
 from .deps import (
     PortalActor,
     PortalActorDep,
@@ -67,6 +73,10 @@ def _project_dto(view: ProjectView) -> PortalProjectDTO:
     )
 
 
+def _client_ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
 def _agent_dto(view: AgentView) -> PortalAgentDTO:
     return PortalAgentDTO(
         id=view.id,
@@ -97,12 +107,28 @@ def _agent_dto(view: AgentView) -> PortalAgentDTO:
 @router.post("/portal/auth/login")
 async def portal_login(
     payload: PortalLoginRequest,
+    request: Request,
     response: Response,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
     issued = await container.portal_auth.login(payload.identifier, payload.password)
     if issued is None:
+        # 失败也要记：登录失败序列是账号被盗的信号
+        await container.audit.record(
+            action="portal.login",
+            actor_kind="portal_user",
+            actor_id=payload.identifier,
+            detail={"ok": False},
+            ip=_client_ip(request),
+        )
         raise DomainError(Errors.UNAUTHENTICATED, "用户名或密码不正确")
+    await container.audit.record(
+        action="portal.login",
+        actor_kind="portal_user",
+        actor_id=issued.user.id,
+        detail={"ok": True, "username": issued.user.username},
+        ip=_client_ip(request),
+    )
     set_portal_cookie(response, container, issued.token)
     projects = await container.portal.list_projects_for_user(issued.user.id)
     return ok(
@@ -126,7 +152,15 @@ async def portal_logout(
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
     raw = request.cookies.get(container.settings.portal_cookie_name, "")
+    user = await container.portal_auth.resolve(raw)
     await container.portal_auth.logout(raw)
+    if user is not None:
+        await container.audit.record(
+            action="portal.logout",
+            actor_kind="portal_user",
+            actor_id=user.id,
+            ip=_client_ip(request),
+        )
     clear_portal_cookie(response, container)
     return ok({"ok": True})
 
@@ -244,6 +278,37 @@ async def portal_chat(
     message = payload.resolved_message()
     if not message.strip():
         raise DomainError(Errors.VALIDATION_FAILED, "对话内容为空")
+
+    # 限流放在开流之前：超限时还能返回正常的 429 JSON，而不是一条已经开始的 SSE。
+    allowed = await container.portal_limiter.consume(
+        scope="chat", subject_id=actor.user.id, limit=CHAT_LIMIT_PER_MINUTE
+    )
+    if not allowed:
+        await container.audit.record(
+            action="portal.chat",
+            actor_kind="portal_user",
+            actor_id=actor.user.id,
+            workspace_id=project.workspace_id,
+            target_kind="portal_agent",
+            target_id=project_agent_id,
+            detail={"channel": channel.value, "rejected": "rate_limited"},
+            ip=_client_ip(request),
+        )
+        raise DomainError(
+            Errors.RATE_LIMITED,
+            f"对话太频繁，每分钟最多 {CHAT_LIMIT_PER_MINUTE} 次",
+        )
+    # 记「发起了调用」；调用结果由 Trace 记录，两者靠 request 时间对齐
+    await container.audit.record(
+        action="portal.chat",
+        actor_kind="portal_user",
+        actor_id=actor.user.id,
+        workspace_id=project.workspace_id,
+        target_kind="portal_agent",
+        target_id=project_agent_id,
+        detail={"channel": channel.value, "stream": payload.stream},
+        ip=_client_ip(request),
+    )
 
     if not payload.stream:
         result = await portal.chat(
@@ -366,6 +431,7 @@ def _assert_provision(container: Container, actor: Actor) -> None:
 @router.post("/portal-admin/users")
 async def create_portal_user(
     payload: CreatePortalUserRequest,
+    request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
@@ -375,6 +441,16 @@ async def create_portal_user(
         display_name=payload.display_name,
         email=payload.email,
         password=payload.password,
+    )
+    await container.audit.record(
+        action="portal_admin.user.create",
+        actor_kind="platform_user",
+        actor_id=actor.user_id,
+        workspace_id=actor.workspace_id,
+        target_kind="portal_user",
+        target_id=user.id,
+        detail={"username": user.username},
+        ip=_client_ip(request),
     )
     return ok(
         PortalUserDTO(
@@ -386,16 +462,57 @@ async def create_portal_user(
     )
 
 
+@router.get("/portal-admin/audit")
+async def list_audit_log(
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    limit: int = 100,
+    offset: int = 0,
+) -> dict:
+    """按工作区读审计流水。**只读**——审计记录不可改、不可删。"""
+    _assert_provision(container, actor)
+    entries = await container.audit.list_recent(
+        workspace_id=actor.workspace_id, limit=min(limit, 500), offset=offset
+    )
+    return list_response(
+        [
+            {
+                "id": item.id,
+                "actor_kind": item.actor_kind,
+                "actor_id": item.actor_id,
+                "action": item.action,
+                "target_kind": item.target_kind,
+                "target_id": item.target_id,
+                "detail": dict(item.detail),
+                "ip": item.ip,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in entries
+        ]
+    )
+
+
 @router.post("/portal-admin/users/{portal_user_id}/status")
 async def set_portal_user_status(
     portal_user_id: str,
     payload: SetPortalUserStatusRequest,
+    request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
     """启用/禁用 portal 账号。**禁用会吊销该用户的全部会话**，旧 cookie 立刻失效。"""
     _assert_provision(container, actor)
     user = await container.portal_auth.set_user_status(portal_user_id, payload.status)
+    await container.audit.record(
+        action="portal_admin.user.status",
+        actor_kind="platform_user",
+        actor_id=actor.user_id,
+        workspace_id=actor.workspace_id,
+        target_kind="portal_user",
+        target_id=portal_user_id,
+        detail={"status": payload.status},
+        ip=_client_ip(request),
+    )
     return ok(
         PortalUserDTO(
             id=user.id,
@@ -430,6 +547,7 @@ async def list_portal_users(
 @router.post("/portal-admin/projects")
 async def create_portal_project(
     payload: CreatePortalProjectRequest,
+    request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
@@ -440,6 +558,16 @@ async def create_portal_project(
         name=payload.name,
         description=payload.description,
         created_by=actor.user_id,
+    )
+    await container.audit.record(
+        action="portal_admin.project.create",
+        actor_kind="platform_user",
+        actor_id=actor.user_id,
+        workspace_id=actor.workspace_id,
+        target_kind="portal_project",
+        target_id=project.id,
+        detail={"slug": project.slug},
+        ip=_client_ip(request),
     )
     return ok(
         PortalProjectDTO(
@@ -472,6 +600,7 @@ async def list_project_members(
 async def add_project_member(
     project_id: str,
     payload: AddProjectMemberRequest,
+    request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
@@ -482,6 +611,16 @@ async def add_project_member(
         portal_user_id=payload.portal_user_id,
         role=payload.role,
     )
+    await container.audit.record(
+        action="portal_admin.member.add",
+        actor_kind="platform_user",
+        actor_id=actor.user_id,
+        workspace_id=actor.workspace_id,
+        target_kind="portal_project",
+        target_id=project_id,
+        detail={"portal_user_id": payload.portal_user_id, "role": payload.role},
+        ip=_client_ip(request),
+    )
     return ok(
         {"id": member.id, "portal_user_id": member.portal_user_id, "role": member.role}
     )
@@ -491,12 +630,23 @@ async def add_project_member(
 async def remove_project_member(
     project_id: str,
     member_id: str,
+    request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
     _assert_provision(container, actor)
     await container.portal.get_project(project_id, actor.workspace_id)
     await container.portal.remove_member(member_id)
+    await container.audit.record(
+        action="portal_admin.member.remove",
+        actor_kind="platform_user",
+        actor_id=actor.user_id,
+        workspace_id=actor.workspace_id,
+        target_kind="portal_project",
+        target_id=project_id,
+        detail={"member_id": member_id},
+        ip=_client_ip(request),
+    )
     return ok({"ok": True})
 
 
@@ -504,6 +654,7 @@ async def remove_project_member(
 async def attach_project_agent(
     project_id: str,
     payload: AttachProjectAgentRequest,
+    request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
@@ -514,6 +665,16 @@ async def attach_project_agent(
         workspace_id=actor.workspace_id,
         asset_id=payload.asset_id,
         display_name=payload.display_name,
+    )
+    await container.audit.record(
+        action="portal_admin.agent.attach",
+        actor_kind="platform_user",
+        actor_id=actor.user_id,
+        workspace_id=actor.workspace_id,
+        target_kind="portal_project",
+        target_id=project_id,
+        detail={"asset_id": payload.asset_id, "portal_agent_id": project_agent.id},
+        ip=_client_ip(request),
     )
     return ok(
         {
@@ -529,6 +690,7 @@ async def bind_portal_channel(
     project_agent_id: str,
     channel: Channel,
     payload: BindPortalChannelRequest,
+    request: Request,
     actor: Actor,
     container: Annotated[Container, Depends(get_container)],
 ) -> dict:
@@ -550,6 +712,19 @@ async def bind_portal_channel(
         project_agent_id=project_agent_id,
         channel=channel,
         deployment_credential_id=payload.deployment_credential_id,
+    )
+    await container.audit.record(
+        action="portal_admin.channel.bind",
+        actor_kind="platform_user",
+        actor_id=actor.user_id,
+        workspace_id=actor.workspace_id,
+        target_kind="portal_agent",
+        target_id=project_agent_id,
+        detail={
+            "channel": channel.value,
+            "deployment_credential_id": payload.deployment_credential_id,
+        },
+        ip=_client_ip(request),
     )
     return ok(
         {

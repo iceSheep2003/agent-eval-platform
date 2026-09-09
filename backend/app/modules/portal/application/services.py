@@ -7,9 +7,10 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from ....contracts.asset import AssetQueryPort
 from ....contracts.common import Channel, Id
@@ -24,6 +25,8 @@ from ....shared.secrets import hash_secret, new_secret
 from ..domain.models import (
     LOCKOUT_MINUTES,
     MAX_FAILED_ATTEMPTS,
+    AuditActorKind,
+    AuditEntry,
     PortalAgentChannel,
     PortalProject,
     PortalUser,
@@ -32,16 +35,20 @@ from ..domain.models import (
     ProjectRole,
 )
 from ..infrastructure.repositories import (
+    AuditRepository,
     PortalAgentChannelRepository,
     PortalProjectRepository,
     PortalSessionRepository,
     PortalUserRepository,
     ProjectAgentRepository,
     ProjectMemberRepository,
+    RateLimitRepository,
 )
 
 #: 项目角色的合法取值，用于在应用层挡住拼错的角色名。
 _ROLES: frozenset[str] = frozenset({"owner", "member"})
+
+logger = logging.getLogger(__name__)
 
 #: 影子通道的回复必须让用户一眼看出「这不是给真实用户的结果」。
 SHADOW_NOTICE = "影子预览 · 未返回真实用户"
@@ -220,6 +227,100 @@ class PortalAuthService:
     async def membership(self, project_id: str, portal_user_id: str) -> ProjectMember | None:
         async with UnitOfWork(self._db) as uow:
             return await ProjectMemberRepository(uow.session).get(project_id, portal_user_id)
+
+
+#: 对话频率上限：每个 portal 用户每分钟多少次。对话是对 RuntimePort 的无界扇出，
+#: 没有这条限制，一个用户就能把执行面打满。
+CHAT_LIMIT_PER_MINUTE = 20
+
+
+class AuditService:
+    """审计：谁、什么时候、对什么做了什么。
+
+    **写入失败不能影响业务**——审计是旁路，不是事务的一部分（否则审计表故障
+    会变成业务故障）。代价是极端情况下可能丢一条记录，比丢一次登录安全。
+    """
+
+    def __init__(self, database: Database, clock: Clock) -> None:
+        self._db = database
+        self._clock = clock
+
+    async def record(
+        self,
+        *,
+        action: str,
+        actor_kind: AuditActorKind,
+        actor_id: str,
+        workspace_id: str | None = None,
+        target_kind: str | None = None,
+        target_id: str | None = None,
+        detail: Mapping[str, Any] | None = None,
+        ip: str | None = None,
+    ) -> None:
+        entry = AuditEntry(
+            id=new_id("audit"),
+            workspace_id=workspace_id,
+            actor_kind=actor_kind,
+            actor_id=actor_id,
+            action=action,
+            target_kind=target_kind,
+            target_id=target_id,
+            detail=dict(detail or {}),
+            ip=ip,
+            created_at=self._clock.now(),
+        )
+        try:
+            async with UnitOfWork(self._db) as uow:
+                AuditRepository(uow.session).add(entry)
+                await uow.commit()
+        except Exception:  # noqa: BLE001 - 审计失败不该拖垮业务
+            logger.warning("写审计失败 action=%s", action, exc_info=True)
+
+    async def list_recent(
+        self, *, workspace_id: str | None = None, limit: int = 100, offset: int = 0
+    ) -> Sequence[AuditEntry]:
+        async with UnitOfWork(self._db) as uow:
+            return list(
+                await AuditRepository(uow.session).list_recent(
+                    workspace_id=workspace_id, limit=limit, offset=offset
+                )
+            )
+
+
+class PortalRateLimiter:
+    """固定窗口限流。计数落库——多进程、重启都不失效。"""
+
+    def __init__(self, database: Database, clock: Clock) -> None:
+        self._db = database
+        self._clock = clock
+
+    async def consume(
+        self, *, scope: str, subject_id: str, limit: int, window_seconds: int = 60
+    ) -> bool:
+        """消耗一次配额。返回 False 表示超限（**不抛异常**，由调用方决定怎么呈现）。"""
+        now = self._clock.now()
+        async with UnitOfWork(self._db) as uow:
+            repo = RateLimitRepository(uow.session)
+            window = await repo.get(scope, subject_id)
+            if window is None or window.is_expired(now, window_seconds):
+                await repo.reset(scope, subject_id, now)
+                await uow.commit()
+                return True
+            if window.count >= limit:
+                return False
+            await repo.bump(scope, subject_id)
+            await uow.commit()
+            return True
+
+    async def remaining(
+        self, *, scope: str, subject_id: str, limit: int, window_seconds: int = 60
+    ) -> int:
+        now = self._clock.now()
+        async with UnitOfWork(self._db) as uow:
+            window = await RateLimitRepository(uow.session).get(scope, subject_id)
+        if window is None or window.is_expired(now, window_seconds):
+            return limit
+        return max(0, limit - window.count)
 
 
 class PortalService:
@@ -499,10 +600,13 @@ def _session_row(
 
 __all__ = [
     "AgentView",
+    "AuditService",
     "CHANNEL_LABELS",
+    "CHAT_LIMIT_PER_MINUTE",
     "ChannelView",
     "IssuedSession",
     "PortalAuthService",
+    "PortalRateLimiter",
     "PortalService",
     "ProjectView",
     "SHADOW_NOTICE",

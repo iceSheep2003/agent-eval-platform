@@ -8,8 +8,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import DateTime, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ....persistence.base import Base, TimestampMixin
@@ -84,6 +85,42 @@ class ProjectAgentRow(Base, TimestampMixin):
     asset_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class AuditRow(Base, TimestampMixin):
+    """审计记录。**只追加**——没有 update/delete 的仓储方法。"""
+
+    __tablename__ = "portal_audit_log"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    #: portal_user | platform_user | system
+    actor_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    detail: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class RateLimitRow(Base, TimestampMixin):
+    """固定窗口计数表。跨进程/重启都有效，不用内存计数器。"""
+
+    __tablename__ = "portal_rate_limit"
+    __table_args__ = (
+        UniqueConstraint("scope", "subject_id", name="uq_portal_rate_limit"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    #: 用途：chat | login | ...
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    #: 主体：portal 用户 ID
+    subject_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    window_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class PortalAgentChannelRow(Base, TimestampMixin):

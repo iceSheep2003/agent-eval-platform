@@ -10,9 +10,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Literal
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any, Literal, Mapping
 
 from ....contracts.common import Channel, Id
 
@@ -94,6 +94,43 @@ class ProjectAgent:
     display_name: str
     sort_order: int
     created_at: datetime
+
+
+#: 审计主体：展示平台用户 / 平台运营者 / 系统。
+AuditActorKind = Literal["portal_user", "platform_user", "system"]
+
+
+@dataclass(frozen=True, slots=True)
+class AuditEntry:
+    """一条审计记录。**只追加，不修改、不删除**——否则就不是审计了。"""
+
+    id: Id
+    workspace_id: Id | None
+    actor_kind: AuditActorKind
+    actor_id: Id
+    action: str
+    target_kind: str | None
+    target_id: Id | None
+    detail: Mapping[str, Any] = field(default_factory=dict)
+    ip: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime(1970, 1, 1))
+
+
+@dataclass(frozen=True, slots=True)
+class RateLimitWindow:
+    """固定窗口计数。`scope` 区分用途（`chat` / `login`），`subject_id` 是主体。
+
+    用固定窗口而不是滑动窗口：实现简单、可持久化、跨进程一致。
+    代价是窗口边界处可能瞬时放行两倍流量——对「防滥用」够用。
+    """
+
+    scope: str
+    subject_id: Id
+    window_started_at: datetime
+    count: int
+
+    def is_expired(self, now: datetime, window_seconds: int) -> bool:
+        return now >= self.window_started_at + timedelta(seconds=window_seconds)
 
 
 @dataclass(frozen=True, slots=True)

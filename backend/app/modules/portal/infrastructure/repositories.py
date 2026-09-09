@@ -5,26 +5,30 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....contracts.common import Channel
 from ....shared.clock import ensure_aware
 from ..domain.models import (
+    AuditEntry,
     PortalAgentChannel,
     PortalProject,
     PortalSession,
     PortalUser,
     ProjectAgent,
     ProjectMember,
+    RateLimitWindow,
 )
 from .tables import (
+    AuditRow,
     PortalAgentChannelRow,
     PortalProjectRow,
     PortalSessionRow,
     PortalUserRow,
     ProjectAgentRow,
     ProjectMemberRow,
+    RateLimitRow,
 )
 
 
@@ -368,3 +372,104 @@ class PortalAgentChannelRepository:
         row = await self._session.get(PortalAgentChannelRow, existing.id)
         if row is not None:
             row.deployment_credential_id = binding.deployment_credential_id
+
+
+def _rate_limit(row: RateLimitRow) -> RateLimitWindow:
+    return RateLimitWindow(
+        scope=row.scope,
+        subject_id=row.subject_id,
+        window_started_at=ensure_aware(row.window_started_at),
+        count=row.count,
+    )
+
+
+class RateLimitRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, scope: str, subject_id: str) -> RateLimitWindow | None:
+        stmt = select(RateLimitRow).where(
+            RateLimitRow.scope == scope, RateLimitRow.subject_id == subject_id
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _rate_limit(row) if row else None
+
+    async def reset(self, scope: str, subject_id: str, now: datetime) -> None:
+        """开新窗口。已存在则原地重置——避免窗口表无限增长。"""
+        stmt = select(RateLimitRow).where(
+            RateLimitRow.scope == scope, RateLimitRow.subject_id == subject_id
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            self._session.add(
+                RateLimitRow(
+                    id=f"{scope}:{subject_id}",
+                    scope=scope,
+                    subject_id=subject_id,
+                    window_started_at=now,
+                    count=1,
+                )
+            )
+            return
+        row.window_started_at = now
+        row.count = 1
+
+    async def bump(self, scope: str, subject_id: str) -> None:
+        await self._session.execute(
+            update(RateLimitRow)
+            .where(RateLimitRow.scope == scope, RateLimitRow.subject_id == subject_id)
+            .values(count=RateLimitRow.count + 1)
+        )
+
+
+def _audit(row: AuditRow) -> AuditEntry:
+    return AuditEntry(
+        id=row.id,
+        workspace_id=row.workspace_id,
+        actor_kind=row.actor_kind,  # type: ignore[arg-type]
+        actor_id=row.actor_id,
+        action=row.action,
+        target_kind=row.target_kind,
+        target_id=row.target_id,
+        detail=dict(row.detail or {}),
+        ip=row.ip,
+        created_at=ensure_aware(row.created_at),
+    )
+
+
+class AuditRepository:
+    """审计仓储。**只有 add 和 list**——已写入的记录不可改、不可删。"""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    def add(self, entry: AuditEntry) -> None:
+        self._session.add(
+            AuditRow(
+                id=entry.id,
+                workspace_id=entry.workspace_id,
+                actor_kind=entry.actor_kind,
+                actor_id=entry.actor_id,
+                action=entry.action,
+                target_kind=entry.target_kind,
+                target_id=entry.target_id,
+                detail=dict(entry.detail),
+                ip=entry.ip,
+            )
+        )
+
+    async def list_recent(
+        self, *, workspace_id: str | None = None, limit: int = 100, offset: int = 0
+    ) -> Sequence[AuditEntry]:
+        """按工作区读流水。
+
+        **登录这类跨工作区的事件 `workspace_id` 为空，一并返回**——否则运营者
+        在任一工作区视图里都看不到认证事件，而那恰恰是最该看的一类。
+        """
+        stmt = select(AuditRow).order_by(AuditRow.created_at.desc())
+        if workspace_id is not None:
+            stmt = stmt.where(
+                or_(AuditRow.workspace_id == workspace_id, AuditRow.workspace_id.is_(None))
+            )
+        stmt = stmt.limit(limit).offset(offset)
+        return [_audit(row) for row in (await self._session.execute(stmt)).scalars().all()]
