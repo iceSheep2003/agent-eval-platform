@@ -11,7 +11,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from ..common import CredentialKind, Id
+from ..common import AssetKind, CredentialKind, Id
+
+
+@dataclass(frozen=True, slots=True)
+class AssetRef:
+    """资产的最小投影。消费方只需要知道「它存在、属于哪个工作区、谁负责」。"""
+
+    id: Id
+    workspace_id: Id
+    kind: AssetKind
+    name: str
+    owner_id: Id
+    lifecycle: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,4 +49,16 @@ class CredentialResolverPort(Protocol):
     async def resolve_credential(self, raw_key: str) -> CredentialContext | None: ...
 
 
-__all__ = ["CredentialContext", "CredentialResolverPort"]
+@runtime_checkable
+class AssetQueryPort(Protocol):
+    """由 asset 实现；evaluation 在绑定策略时校验资产存在。"""
+
+    async def get_asset(self, asset_id: Id, workspace_id: Id) -> AssetRef | None: ...
+
+
+__all__ = [
+    "AssetQueryPort",
+    "AssetRef",
+    "CredentialContext",
+    "CredentialResolverPort",
+]

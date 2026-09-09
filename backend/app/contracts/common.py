@@ -145,6 +145,54 @@ class ScopeKind(StrEnum):
     TENANT = "tenant"
 
 
+class DatasetOrigin(StrEnum):
+    """样本从哪来。与 `DatasetPurpose` 正交——来源不决定用途。"""
+
+    BENCHMARK = "benchmark"
+    MANUAL = "manual"
+    PRODUCTION_TRACE = "production_trace"
+    AGENT_FEEDBACK = "agent_feedback"
+    DEFECT = "defect"
+
+
+class DatasetPurpose(StrEnum):
+    """拿来回答什么质量问题。决定能绑哪些策略。"""
+
+    CAPABILITY = "capability"
+    REGRESSION = "regression"
+    GATE = "gate"
+    MONITORING = "monitoring"
+
+
+class TaskShape(StrEnum):
+    SINGLE_TURN = "single_turn"
+    MULTI_TURN = "multi_turn"
+    AGENTIC = "agentic"
+
+
+class TaskProtocol(StrEnum):
+    """样本需要哪种执行方式。见 docs/backend-dataset.md §3。"""
+
+    QA = "qa/v1"
+    TOOL_LOOP = "tool-loop/v1"
+    AGENTIC = "agentic-bench/v1"
+
+
+class ItemValidation(StrEnum):
+    """样本复核状态。未通过复核的样本不得进入固化版本。"""
+
+    VALID = "valid"
+    NEEDS_REVIEW = "needs_review"
+    INVALID = "invalid"
+
+
+class GateScope(StrEnum):
+    """门禁的判定范围。与 `ScopeKind`（得分统计范围）是两回事。"""
+
+    WORKSPACE = "workspace"  # 整体质量，默认阻断
+    TENANT = "tenant"        # 单租户质量，默认只告警（小样本保护）
+
+
 class CredentialKind(StrEnum):
     """机器凭证。三条链互不混用，权限严格收窄。"""
 

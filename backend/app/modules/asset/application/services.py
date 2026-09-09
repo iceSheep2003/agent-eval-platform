@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Mapping, Sequence
 
-from ....contracts.asset import CredentialContext
+from ....contracts.asset import AssetRef, CredentialContext
 from ....contracts.common import AssetKind, Channel, CredentialKind, VersionLifecycle
 from ....contracts.errors import DomainError, Errors, NotFound
 from ....contracts.identity import TenantProvisioningPort
@@ -80,6 +80,21 @@ class AssetService:
         if asset is None:
             raise NotFound("Agent", asset_id)
         return asset
+
+    async def get_asset(self, asset_id: str, workspace_id: str) -> AssetRef | None:
+        """实现 `contracts.asset.AssetQueryPort`：只返回投影，不抛错。"""
+        async with UnitOfWork(self._db) as uow:
+            asset = await AssetRepository(uow.session).get(asset_id, workspace_id)
+        if asset is None:
+            return None
+        return AssetRef(
+            id=asset.id,
+            workspace_id=asset.workspace_id,
+            kind=asset.kind,
+            name=asset.name,
+            owner_id=asset.owner_id,
+            lifecycle=asset.lifecycle,
+        )
 
     async def list_versions(self, asset_id: str, workspace_id: str) -> Sequence[AssetVersion]:
         await self.get_agent(asset_id, workspace_id)
