@@ -5,8 +5,7 @@
  * `test_version` 是显示值，`test_version_id` 才是晋级/回退的入参。
  */
 
-import { request } from '@umijs/max';
-import { withWorkspace } from './http';
+import { call, withWorkspace } from './http';
 
 export type AgentSourceKind = 'package' | 'github' | 'sdk';
 
@@ -146,10 +145,10 @@ export type EvalAgentDetail = EvalAgent & {
 };
 
 export const getAgents = (workspaceId: string) =>
-  request<{ items: EvalAgent[] }>('/api/agents', withWorkspace(workspaceId));
+  call<{ items: EvalAgent[] }>('/api/agents', withWorkspace(workspaceId));
 
 export const getAgent = (workspaceId: string, agentId: string) =>
-  request<EvalAgentDetail>(`/api/agents/${agentId}`, withWorkspace(workspaceId));
+  call<EvalAgentDetail>(`/api/agents/${agentId}`, withWorkspace(workspaceId));
 
 /**
  * 接入 Agent。三种方式走同一个接口，用 `connect_type` + `source` 区分，
@@ -164,26 +163,26 @@ export const registerAgent = (
     source?: Record<string, unknown>;
   },
 ) =>
-  request<EvalAgentDetail>('/api/agents', {
+  call<EvalAgentDetail>('/api/agents', {
     method: 'POST',
     data: payload,
     ...withWorkspace(workspaceId),
   });
 
 export const getAgentArtifacts = (workspaceId: string, agentId: string) =>
-  request<{ items: AgentArtifact[] }>(
+  call<{ items: AgentArtifact[] }>(
     `/api/agents/${agentId}/artifacts`,
     withWorkspace(workspaceId),
   );
 
 export const getAgentTraces = (workspaceId: string, agentId: string, limit = 50) =>
-  request<{ items: AgentTraceSummary[] }>(
+  call<{ items: AgentTraceSummary[] }>(
     `/api/agents/${agentId}/traces?limit=${limit}`,
     withWorkspace(workspaceId),
   );
 
 export const getTrace = (workspaceId: string, traceId: string) =>
-  request<AgentTrace>(`/api/traces/${traceId}`, withWorkspace(workspaceId));
+  call<AgentTrace>(`/api/traces/${traceId}`, withWorkspace(workspaceId));
 
 /** 晋级。目标通道决定所需权限；门禁未通过返回 409 `gate_blocked`。 */
 export const promoteAgentVersion = (
@@ -196,7 +195,7 @@ export const promoteAgentVersion = (
     confirm?: boolean;
   },
 ) =>
-  request<{
+  call<{
     id: string;
     version_id: string;
     from_channel: string;
@@ -220,13 +219,13 @@ export const rollbackAgentVersion = (
     confirm?: boolean;
   },
 ) =>
-  request<{ id: string; channel: string; to_version_id: string }>(
+  call<{ id: string; channel: string; to_version_id: string }>(
     `/api/agents/${agentId}/rollback`,
     { method: 'POST', data: payload, ...withWorkspace(workspaceId) },
   );
 
 export const getAgentPromotions = (workspaceId: string, agentId: string) =>
-  request<{ items: Array<Record<string, unknown>> }>(
+  call<{ items: Array<Record<string, unknown>> }>(
     `/api/agents/${agentId}/promotions`,
     withWorkspace(workspaceId),
   );

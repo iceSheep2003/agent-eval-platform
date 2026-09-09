@@ -1,7 +1,6 @@
 /** 数据集。 */
 
-import { request } from '@umijs/max';
-import { withWorkspace } from './http';
+import { call, withWorkspace } from './http';
 
 export type EvalDataset = {
   id: string;
@@ -14,4 +13,4 @@ export type EvalDataset = {
 };
 
 export const getDatasets = (workspaceId: string) =>
-  request<{ items: EvalDataset[] }>('/api/datasets', withWorkspace(workspaceId));
+  call<{ items: EvalDataset[] }>('/api/datasets', withWorkspace(workspaceId));

@@ -1,7 +1,6 @@
 /** 评测配置：能力、维度、策略。 */
 
-import { request } from '@umijs/max';
-import { withWorkspace } from './http';
+import { call, withWorkspace } from './http';
 
 export type EvalCapability = {
   id: string;
@@ -31,7 +30,7 @@ export type EvalPolicy = {
 };
 
 export const getCapabilities = (workspaceId: string) =>
-  request<{ items: EvalCapability[] }>('/api/capabilities', withWorkspace(workspaceId));
+  call<{ items: EvalCapability[] }>('/api/capabilities', withWorkspace(workspaceId));
 
 export const getPolicies = (workspaceId: string) =>
-  request<{ items: EvalPolicy[] }>('/api/policies', withWorkspace(workspaceId));
+  call<{ items: EvalPolicy[] }>('/api/policies', withWorkspace(workspaceId));

@@ -170,11 +170,10 @@ export default defineConfig({
    * @description 它基于 axios 和 ahooks 的 useRequest 提供了一套统一的网络请求和错误处理方案。
    * @doc https://umijs.org/docs/max/request
    */
-  request: {
-    // 后端统一返回 {success, data, errorCode, errorMessage, showType}；
-    // 这一行让 request 自动解包 data，页面才能继续写 `result.items`。
-    dataField: 'data',
-  },
+  request: {},
+  // 注：不要在这里配 `dataField: 'data'`。本项目的 umi 版本只在配置 schema 里
+  // 声明了它，运行时并未实现——配了不生效，页面会拿到整个信封。
+  // 解包在 `src/services/eval/http.ts` 的 `call()` 里显式做。
   /**
    * @name React Query 插件
    * @description 使用 react-query 管理服务端状态

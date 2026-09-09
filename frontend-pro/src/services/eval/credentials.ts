@@ -1,7 +1,6 @@
 /** 接入凭证：签发、轮换、吊销。明文 `secret` 只在创建/轮换响应里出现一次。 */
 
-import { request } from '@umijs/max';
-import { withWorkspace } from './http';
+import { call, withWorkspace } from './http';
 
 export type AgentCredential = {
   id: string;
@@ -20,7 +19,7 @@ export type AgentCredential = {
 };
 
 export const getAgentCredentials = (workspaceId: string) =>
-  request<{ items: AgentCredential[] }>('/api/agent-credentials', withWorkspace(workspaceId));
+  call<{ items: AgentCredential[] }>('/api/agent-credentials', withWorkspace(workspaceId));
 
 export const createAgentCredential = (
   workspaceId: string,
@@ -33,20 +32,20 @@ export const createAgentCredential = (
     expires_at?: string;
   },
 ) =>
-  request<AgentCredential & { secret: string }>('/api/agent-credentials', {
+  call<AgentCredential & { secret: string }>('/api/agent-credentials', {
     method: 'POST',
     data: payload,
     ...withWorkspace(workspaceId),
   });
 
 export const rotateAgentCredential = (workspaceId: string, credentialId: string) =>
-  request<AgentCredential & { secret: string }>(
+  call<AgentCredential & { secret: string }>(
     `/api/agent-credentials/${credentialId}/rotate`,
     { method: 'POST', ...withWorkspace(workspaceId) },
   );
 
 export const revokeAgentCredential = (workspaceId: string, credentialId: string) =>
-  request<AgentCredential>(`/api/agent-credentials/${credentialId}/revoke`, {
+  call<AgentCredential>(`/api/agent-credentials/${credentialId}/revoke`, {
     method: 'POST',
     ...withWorkspace(workspaceId),
   });

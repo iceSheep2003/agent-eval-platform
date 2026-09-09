@@ -1,7 +1,6 @@
 /** 评测运行：列表、详情、运行控制。 */
 
-import { request } from '@umijs/max';
-import { withWorkspace } from './http';
+import { call, withWorkspace } from './http';
 
 export type EvalRun = {
   id: string;
@@ -39,17 +38,17 @@ export type EvalRunDetail = EvalRun & {
 };
 
 export const getRuns = (workspaceId: string) =>
-  request<{ items: EvalRun[] }>('/api/runs', withWorkspace(workspaceId));
+  call<{ items: EvalRun[] }>('/api/runs', withWorkspace(workspaceId));
 
 export const getRun = (workspaceId: string, runId: string) =>
-  request<EvalRunDetail>(`/api/runs/${runId}`, withWorkspace(workspaceId));
+  call<EvalRunDetail>(`/api/runs/${runId}`, withWorkspace(workspaceId));
 
 export const runAction = (
   workspaceId: string,
   runId: string,
   action: 'pause' | 'resume' | 'stop',
 ) =>
-  request<EvalRunDetail>(`/api/runs/${runId}/${action}`, {
+  call<EvalRunDetail>(`/api/runs/${runId}/${action}`, {
     method: 'POST',
     ...withWorkspace(workspaceId),
   });
