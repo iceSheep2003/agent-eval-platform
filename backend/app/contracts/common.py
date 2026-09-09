@@ -206,6 +206,19 @@ class CredentialKind(StrEnum):
     TENANT_SYNC = "evs"  # 只同步租户清单
 
 
+class OrgRole(StrEnum):
+    """组织级角色（对齐 Langfuse）。
+
+    只管**组织层**的事：成员、计费、建/删项目。工作区内的评测资产权限
+    看 `WorkspaceRole`——两套角色职责不同，不做跨层级的大小比较。
+    """
+
+    OWNER = "owner"
+    ADMIN = "admin"
+    MEMBER = "member"
+    VIEWER = "viewer"
+
+
 class WorkspaceRole(StrEnum):
     OWNER = "owner"
     ADMIN = "admin"

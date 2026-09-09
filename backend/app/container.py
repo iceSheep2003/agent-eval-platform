@@ -56,7 +56,7 @@ class Container:
             session_idle_hours=resolved.session_idle_hours,
             session_absolute_hours=resolved.session_absolute_hours,
         )
-        assets = AssetService(database, resolved_clock, identity)
+        assets = AssetService(database, resolved_clock, identity, identity)
         datasets = DatasetService(database, resolved_clock)
         evaluations = EvaluationService(database, resolved_clock, datasets, assets)
         sandbox = LocalSandboxRuntime()

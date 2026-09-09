@@ -18,7 +18,7 @@ from ....contracts.asset import (
 )
 from ....contracts.common import AssetKind, Channel, CredentialKind, VersionLifecycle
 from ....contracts.errors import DomainError, Errors, NotFound
-from ....contracts.identity import TenantProvisioningPort
+from ....contracts.identity import MembershipQueryPort, TenantProvisioningPort
 from ....persistence import UnitOfWork
 from ....persistence.database import Database
 from ....shared.clock import Clock
@@ -68,10 +68,12 @@ class AssetService:
         database: Database,
         clock: Clock,
         tenants: TenantProvisioningPort,
+        members: MembershipQueryPort,
     ) -> None:
         self._db = database
         self._clock = clock
         self._tenants = tenants
+        self._members = members
 
     # -- 查询 ----------------------------------------------------------------
 
@@ -236,6 +238,12 @@ class AssetService:
         `source` 携带接入方式特有的字段（github 的 repository/ref、
         package 的 artifact_id/entrypoint），由 `spec/agent.py` 校验。
         """
+        # 负责人必须是本工作区成员——它决定变更责任，不能收任意字符串
+        if not await self._members.is_member(owner_id, workspace_id):
+            raise DomainError(
+                Errors.VALIDATION_FAILED, "负责人必须是本工作区成员", owner_id=owner_id
+            )
+
         spec_body: dict[str, Any] = {"kind": AssetKind.AGENT.value, "connect_type": connect_type}
         if environment:
             spec_body["environment"] = environment

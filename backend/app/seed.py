@@ -10,10 +10,18 @@ import asyncio
 import sys
 
 from .container import Container
-from .contracts.common import WorkspaceRole
-from .modules.identity.domain.models import Membership, User, Workspace
+from .contracts.common import OrgRole, WorkspaceRole
+from .modules.identity.domain.models import (
+    Membership,
+    Organization,
+    OrganizationMembership,
+    User,
+    Workspace,
+)
 from .modules.identity.infrastructure.repositories import (
     MembershipRepository,
+    OrganizationMembershipRepository,
+    OrganizationRepository,
     UserRepository,
     WorkspaceRepository,
 )
@@ -21,6 +29,8 @@ from .modules.identity.infrastructure.security import hash_password
 from .persistence import UnitOfWork
 from .shared.ids import new_id
 
+DEMO_ORG_SLUG = "eval-loom"
+DEMO_ORG_NAME = "Eval Loom"
 DEMO_WORKSPACE_SLUG = "eval-dev"
 DEMO_WORKSPACE_NAME = "Eval Dev"
 DEMO_USERS = (
@@ -32,14 +42,28 @@ DEMO_USERS = (
 async def seed(container: Container) -> dict[str, str]:
     created: dict[str, str] = {}
     async with UnitOfWork(container.database) as uow:
+        organizations = OrganizationRepository(uow.session)
+        org_memberships = OrganizationMembershipRepository(uow.session)
         workspaces = WorkspaceRepository(uow.session)
         users = UserRepository(uow.session)
         memberships = MembershipRepository(uow.session)
+
+        organization = await organizations.get_by_slug(DEMO_ORG_SLUG)
+        if organization is None:
+            organization = Organization(
+                id=new_id("organization"),
+                slug=DEMO_ORG_SLUG,
+                name=DEMO_ORG_NAME,
+                created_at=container.clock.now(),
+            )
+            organizations.add(organization)
+        created["organization_id"] = organization.id
 
         workspace = await workspaces.get_by_slug(DEMO_WORKSPACE_SLUG)
         if workspace is None:
             workspace = Workspace(
                 id=new_id("workspace"),
+                organization_id=organization.id,
                 slug=DEMO_WORKSPACE_SLUG,
                 name=DEMO_WORKSPACE_NAME,
                 created_at=container.clock.now(),
@@ -60,6 +84,15 @@ async def seed(container: Container) -> dict[str, str]:
                     created_at=container.clock.now(),
                 )
                 users.add(user)
+            if await org_memberships.get(organization.id, user.id) is None:
+                org_memberships.add(
+                    OrganizationMembership(
+                        organization_id=organization.id,
+                        user_id=user.id,
+                        role=OrgRole.OWNER if role is WorkspaceRole.OWNER else OrgRole.MEMBER,
+                        created_at=container.clock.now(),
+                    )
+                )
             if await memberships.get(workspace.id, user.id) is None:
                 memberships.add(
                     Membership(
@@ -143,6 +176,7 @@ async def main() -> int:
         created = await seed(container)
     finally:
         await container.shutdown()
+    print(f"组织: {DEMO_ORG_SLUG} ({created['organization_id']})")
     print(f"工作区: {DEMO_WORKSPACE_SLUG} ({created['workspace_id']})")
     for username, password, _, role in DEMO_USERS:
         print(f"  {username} / {password}  role={role.value}")

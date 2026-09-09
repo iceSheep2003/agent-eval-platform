@@ -26,12 +26,45 @@ class UserRow(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
 
 
-class WorkspaceRow(Base, TimestampMixin):
-    __tablename__ = "identity_workspace"
+class OrganizationRow(Base, TimestampMixin):
+    __tablename__ = "identity_organization"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class OrganizationMembershipRow(Base, TimestampMixin):
+    __tablename__ = "identity_organization_membership"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "user_id", name="uq_org_membership"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("identity_organization.id"), nullable=False, index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("identity_user.id"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    organization: Mapped["OrganizationRow"] = relationship()
+    user: Mapped["UserRow"] = relationship()
+
+
+class WorkspaceRow(Base, TimestampMixin):
+    __tablename__ = "identity_workspace"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    #: 项目必须属于一个组织
+    organization_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("identity_organization.id"), nullable=False, index=True
+    )
+    slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    organization: Mapped["OrganizationRow"] = relationship()
 
 
 class TenantRow(Base, TimestampMixin):

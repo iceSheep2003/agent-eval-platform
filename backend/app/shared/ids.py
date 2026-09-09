@@ -22,6 +22,7 @@ _MAX_RANDOM = (1 << 80) - 1
 #: 实体类型 → ID 前缀。新增实体时必须在此登记，避免前缀散落在业务代码里。
 PREFIXES: dict[str, str] = {
     # identity
+    "organization": "org",
     "workspace": "ws",
     "user": "usr",
     "session": "ses",

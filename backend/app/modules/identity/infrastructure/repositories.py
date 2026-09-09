@@ -8,13 +8,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Sequence
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ....contracts.common import WorkspaceRole
+from ....contracts.common import OrgRole, WorkspaceRole
 from ....shared.clock import ensure_aware
 from ..domain.models import (
     Membership,
+    Organization,
+    OrganizationMembership,
     Session,
     Tenant,
     TenantScope,
@@ -22,7 +24,15 @@ from ..domain.models import (
     UserStatus,
     Workspace,
 )
-from .tables import MembershipRow, SessionRow, TenantRow, UserRow, WorkspaceRow
+from .tables import (
+    MembershipRow,
+    OrganizationMembershipRow,
+    OrganizationRow,
+    SessionRow,
+    TenantRow,
+    UserRow,
+    WorkspaceRow,
+)
 
 
 def _scope_from_json(raw: Any) -> TenantScope:
@@ -54,7 +64,26 @@ def _user(row: UserRow) -> User:
 
 def _workspace(row: WorkspaceRow) -> Workspace:
     return Workspace(
+        id=row.id,
+        organization_id=row.organization_id,
+        slug=row.slug,
+        name=row.name,
+        created_at=ensure_aware(row.created_at),
+    )
+
+
+def _organization(row: OrganizationRow) -> Organization:
+    return Organization(
         id=row.id, slug=row.slug, name=row.name, created_at=ensure_aware(row.created_at)
+    )
+
+
+def _org_membership(row: OrganizationMembershipRow) -> OrganizationMembership:
+    return OrganizationMembership(
+        organization_id=row.organization_id,
+        user_id=row.user_id,
+        role=OrgRole(row.role),
+        created_at=ensure_aware(row.created_at),
     )
 
 
@@ -164,7 +193,12 @@ class WorkspaceRepository:
 
     def add(self, workspace: Workspace) -> None:
         self._session.add(
-            WorkspaceRow(id=workspace.id, slug=workspace.slug, name=workspace.name)
+            WorkspaceRow(
+                id=workspace.id,
+                organization_id=workspace.organization_id,
+                slug=workspace.slug,
+                name=workspace.name,
+            )
         )
 
 
@@ -179,6 +213,35 @@ class MembershipRepository:
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _membership(row) if row else None
+
+    async def list_members(self, workspace_id: str) -> Sequence[tuple[Membership, User]]:
+        """工作区成员（带用户信息），供「负责人」下拉和成员管理页使用。"""
+        stmt = (
+            select(MembershipRow, UserRow)
+            .join(UserRow, UserRow.id == MembershipRow.user_id)
+            .where(MembershipRow.workspace_id == workspace_id)
+            .order_by(MembershipRow.created_at)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [(_membership(member), _user(user)) for member, user in rows]
+
+    async def set_role(self, workspace_id: str, user_id: str, role: WorkspaceRole) -> None:
+        await self._session.execute(
+            update(MembershipRow)
+            .where(
+                MembershipRow.workspace_id == workspace_id,
+                MembershipRow.user_id == user_id,
+            )
+            .values(role=role.value)
+        )
+
+    async def remove(self, workspace_id: str, user_id: str) -> None:
+        await self._session.execute(
+            delete(MembershipRow).where(
+                MembershipRow.workspace_id == workspace_id,
+                MembershipRow.user_id == user_id,
+            )
+        )
 
     async def list_for_user(self, user_id: str) -> Sequence[Membership]:
         stmt = select(MembershipRow).where(MembershipRow.user_id == user_id)
@@ -274,3 +337,90 @@ class SessionRepository:
             .values(revoked_at=now)
         )
         return int(result.rowcount or 0)
+
+
+class OrganizationRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, organization_id: str) -> Organization | None:
+        row = await self._session.get(OrganizationRow, organization_id)
+        return _organization(row) if row else None
+
+    async def get_by_slug(self, slug: str) -> Organization | None:
+        stmt = select(OrganizationRow).where(OrganizationRow.slug == slug)
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _organization(row) if row else None
+
+    async def list_for_user(self, user_id: str) -> Sequence[Organization]:
+        stmt = (
+            select(OrganizationRow)
+            .join(
+                OrganizationMembershipRow,
+                OrganizationMembershipRow.organization_id == OrganizationRow.id,
+            )
+            .where(OrganizationMembershipRow.user_id == user_id)
+            .order_by(OrganizationRow.created_at)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_organization(row) for row in rows]
+
+    def add(self, organization: Organization) -> None:
+        self._session.add(
+            OrganizationRow(
+                id=organization.id, slug=organization.slug, name=organization.name
+            )
+        )
+
+
+class OrganizationMembershipRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, organization_id: str, user_id: str) -> OrganizationMembership | None:
+        stmt = select(OrganizationMembershipRow).where(
+            OrganizationMembershipRow.organization_id == organization_id,
+            OrganizationMembershipRow.user_id == user_id,
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _org_membership(row) if row else None
+
+    async def list_members(
+        self, organization_id: str
+    ) -> Sequence[tuple[OrganizationMembership, User]]:
+        stmt = (
+            select(OrganizationMembershipRow, UserRow)
+            .join(UserRow, UserRow.id == OrganizationMembershipRow.user_id)
+            .where(OrganizationMembershipRow.organization_id == organization_id)
+            .order_by(OrganizationMembershipRow.created_at)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [(_org_membership(member), _user(user)) for member, user in rows]
+
+    def add(self, membership: OrganizationMembership) -> None:
+        self._session.add(
+            OrganizationMembershipRow(
+                id=f"{membership.organization_id}:{membership.user_id}",
+                organization_id=membership.organization_id,
+                user_id=membership.user_id,
+                role=membership.role.value,
+            )
+        )
+
+    async def set_role(self, organization_id: str, user_id: str, role: OrgRole) -> None:
+        await self._session.execute(
+            update(OrganizationMembershipRow)
+            .where(
+                OrganizationMembershipRow.organization_id == organization_id,
+                OrganizationMembershipRow.user_id == user_id,
+            )
+            .values(role=role.value)
+        )
+
+    async def remove(self, organization_id: str, user_id: str) -> None:
+        await self._session.execute(
+            delete(OrganizationMembershipRow).where(
+                OrganizationMembershipRow.organization_id == organization_id,
+                OrganizationMembershipRow.user_id == user_id,
+            )
+        )

@@ -15,6 +15,8 @@ class RegisterAgentRequest(BaseModel):
     description: str = Field(default="", max_length=512)
     connect_type: Literal["sdk", "github", "package"] = "sdk"
     environment: str | None = None
+    #: 负责人：必须是本工作区成员。留空则默认当前登录用户。
+    owner_id: str | None = None
     #: 接入方式特有字段：github 的 repository/ref、package 的 artifact_id/entrypoint
     source: dict[str, Any] | None = None
 

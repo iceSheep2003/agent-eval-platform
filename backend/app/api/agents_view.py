@@ -9,7 +9,7 @@ observability（成功率/延迟/成本）三个模块。放进任一模块都�
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Sequence
+from typing import Annotated, Any, Mapping, Sequence
 
 from fastapi import APIRouter, Depends, Query
 
@@ -34,7 +34,13 @@ def _source_ref(spec: dict[str, Any], name: str) -> str:
     return f"{name.lower().replace(' ', '-')}.zip"
 
 
-async def _agent_row(container: Container, agent: Any, workspace_id: str, window_hours: int) -> dict:
+async def _agent_row(
+    container: Container,
+    agent: Any,
+    workspace_id: str,
+    window_hours: int,
+    member_names: Mapping[str, str] | None = None,
+) -> dict:
     versions = await container.assets.list_versions(agent.id, workspace_id)
     channels = await container.assets.channel_states(agent.id, workspace_id)
     credentials = [
@@ -61,7 +67,8 @@ async def _agent_row(container: Container, agent: Any, workspace_id: str, window
         "id": agent.id,
         "name": agent.name,
         "description": agent.description,
-        "owner": agent.owner_id,
+        "owner": (member_names or {}).get(agent.owner_id, agent.owner_id),
+        "owner_id": agent.owner_id,
         "connect_type": agent.connect_type,
         "status": agent.lifecycle,
         "environment": agent.connect_type,
@@ -98,8 +105,10 @@ async def list_agents_view(
 ) -> dict:
     assert_permission(container, actor, Permission.ASSET_READ)
     agents = await container.assets.list_agents(actor.workspace_id)
+    members = await container.identity.list_members(actor.workspace_id)
+    names = {member.user_id: member.display_name for member in members}
     items = [
-        await _agent_row(container, agent, actor.workspace_id, window_hours)
+        await _agent_row(container, agent, actor.workspace_id, window_hours, names)
         for agent in agents
     ]
     return list_response(items)
@@ -121,7 +130,9 @@ async def get_agent_detail(
     # 用领域对象（含 description / connect_type / created_at），不是投影
     agent = await container.assets.get_agent(agent_id, actor.workspace_id)
     workspace_id = actor.workspace_id
-    base = await _agent_row(container, agent, workspace_id, window_hours)
+    members = await container.identity.list_members(workspace_id)
+    names = {member.user_id: member.display_name for member in members}
+    base = await _agent_row(container, agent, workspace_id, window_hours, names)
 
     versions = await container.assets.list_versions(agent_id, workspace_id)
     credentials = [

@@ -16,30 +16,43 @@ from backend.tests.architecture._helpers import BACKEND_ROOT
 
 VERSIONS_DIR = BACKEND_ROOT / "migrations" / "versions"
 
-#: op.xxx(<table_name>, ...) —— 第一个参数是表名的操作
-TABLE_OPS = (
+#: 第一个参数是**表名**的操作
+TABLE_FIRST_OPS = (
     "create_table",
     "drop_table",
     "add_column",
     "drop_column",
     "alter_column",
-    "create_index",
-    "drop_index",
     "create_unique_constraint",
     "create_foreign_key",
     "create_check_constraint",
 )
 
+#: 第一个参数是**索引名**、第二个才是表名的操作
+TABLE_SECOND_OPS = ("create_index", "drop_index")
+
 #: `batch_op.add_column('x')` 的第一个参数是**列名**，不是表名——表名在 `batch_alter_table`
 #: 上。所以用 `(?<!batch_)` 排除掉，表名改由 `_BATCH` 单独校验。
-_CALL = re.compile(r"(?<!batch_)op\.(" + "|".join(TABLE_OPS) + r")\(\s*[\"']([a-z_]+)[\"']")
+_CALL = re.compile(
+    r"(?<!batch_)op\.(" + "|".join(TABLE_FIRST_OPS) + r")\(\s*[\"']([a-z_]+)[\"']"
+)
+
+#: create_index('ix_x', 'table_name', ...) —— 表名在第二位
+_CALL_SECOND = re.compile(
+    r"(?<!batch_)op\.(" + "|".join(TABLE_SECOND_OPS)
+    + r")\(\s*[\"'][a-z_]+[\"']\s*,\s*[\"']([a-z_]+)[\"']"
+)
 
 #: batch_alter_table('table_name', ...) —— 批处理块的目标表。
 _BATCH = re.compile(r"batch_alter_table\(\s*[\"']([a-z_]+)[\"']")
 
 
 def _table_names(source: str) -> list[str]:
-    return [table for _, table in _CALL.findall(source)] + _BATCH.findall(source)
+    return (
+        [table for _, table in _CALL.findall(source)]
+        + [table for _, table in _CALL_SECOND.findall(source)]
+        + _BATCH.findall(source)
+    )
 
 
 def _migrations() -> list[Path]:

@@ -8,17 +8,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Sequence
 
-from ....contracts.common import Id
+from ....contracts.common import Id, OrgRole, WorkspaceRole
 from ....contracts.errors import DomainError, Errors, NotFound, WorkspaceMismatch
-from ....contracts.identity import ActorContext, Subject
+from ....contracts.identity import ActorContext, MemberRef, Subject
 from ....persistence import Database, UnitOfWork
 from ....shared.clock import Clock
 from ....shared.ids import new_id
-from ..domain.models import Membership, Session, Tenant, User, Workspace
+from ..domain.models import (
+    Membership,
+    Organization,
+    OrganizationMembership,
+    Session,
+    Tenant,
+    User,
+    Workspace,
+)
 from ..domain.authorizer import Authorizer
 from ..infrastructure.repositories import (
     MembershipRepository,
+    OrganizationMembershipRepository,
+    OrganizationRepository,
     SessionRepository,
     TenantRepository,
     UserRepository,
@@ -126,6 +137,7 @@ class IdentityService:
             user_id=user.id,
             display_name=user.display_name,
             email=user.email,
+            organization_id=workspace.organization_id,
             workspace_id=workspace.id,
             workspace_name=workspace.name,
             role=membership.role,
@@ -191,6 +203,163 @@ class IdentityService:
 
     def permissions_of(self, subject: Subject):
         return self._authorizer.permissions_of(subject)
+
+    # -- 组织 ----------------------------------------------------------------
+
+    async def list_organizations(self, user_id: Id) -> Sequence[Organization]:
+        async with UnitOfWork(self._db) as uow:
+            return list(await OrganizationRepository(uow.session).list_for_user(user_id))
+
+    async def org_role_of(self, organization_id: Id, user_id: Id) -> OrgRole | None:
+        async with UnitOfWork(self._db) as uow:
+            membership = await OrganizationMembershipRepository(uow.session).get(
+                organization_id, user_id
+            )
+        return membership.role if membership else None
+
+    async def list_org_members(
+        self, organization_id: Id
+    ) -> Sequence[tuple[OrganizationMembership, User]]:
+        async with UnitOfWork(self._db) as uow:
+            return list(
+                await OrganizationMembershipRepository(uow.session).list_members(
+                    organization_id
+                )
+            )
+
+    async def add_org_member(
+        self, organization_id: Id, identifier: str, role: OrgRole
+    ) -> OrganizationMembership:
+        """按用户名或邮箱把已有账号加进组织。"""
+        async with UnitOfWork(self._db) as uow:
+            users = UserRepository(uow.session)
+            user = await users.find_by_identifier(identifier)
+            if user is None:
+                raise NotFound("用户", identifier)
+            memberships = OrganizationMembershipRepository(uow.session)
+            if await memberships.get(organization_id, user.id) is not None:
+                raise DomainError(
+                    Errors.VALIDATION_FAILED, f"{identifier} 已经是该组织成员"
+                )
+            membership = OrganizationMembership(
+                organization_id=organization_id,
+                user_id=user.id,
+                role=role,
+                created_at=self._clock.now(),
+            )
+            memberships.add(membership)
+            await uow.commit()
+        return membership
+
+    async def set_org_member_role(
+        self, organization_id: Id, user_id: Id, role: OrgRole
+    ) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await OrganizationMembershipRepository(uow.session).set_role(
+                organization_id, user_id, role
+            )
+            await uow.commit()
+
+    async def remove_org_member(self, organization_id: Id, user_id: Id) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await OrganizationMembershipRepository(uow.session).remove(
+                organization_id, user_id
+            )
+            await uow.commit()
+
+    async def create_workspace(
+        self, *, organization_id: Id, owner_id: Id, slug: str, name: str
+    ) -> Workspace:
+        """建项目，并把创建者设为项目 owner。"""
+        async with UnitOfWork(self._db) as uow:
+            workspaces = WorkspaceRepository(uow.session)
+            if await workspaces.get_by_slug(slug) is not None:
+                raise DomainError(Errors.VALIDATION_FAILED, f"项目标识 {slug} 已存在")
+            workspace = Workspace(
+                id=new_id("workspace"),
+                organization_id=organization_id,
+                slug=slug,
+                name=name,
+                created_at=self._clock.now(),
+            )
+            workspaces.add(workspace)
+            await uow.session.flush()
+            MembershipRepository(uow.session).add(
+                Membership(
+                    workspace_id=workspace.id,
+                    user_id=owner_id,
+                    role=WorkspaceRole.OWNER,
+                    tenant_scope="all",
+                    created_at=self._clock.now(),
+                )
+            )
+            await uow.commit()
+        return workspace
+
+    # -- 工作区成员（实现 contracts.identity.MembershipQueryPort）---------------
+
+    async def is_member(self, user_id: Id, workspace_id: Id) -> bool:
+        async with UnitOfWork(self._db) as uow:
+            return (
+                await MembershipRepository(uow.session).get(workspace_id, user_id)
+            ) is not None
+
+    async def list_members(self, workspace_id: Id) -> Sequence[MemberRef]:
+        async with UnitOfWork(self._db) as uow:
+            rows = await MembershipRepository(uow.session).list_members(workspace_id)
+        return [
+            MemberRef(
+                user_id=user.id,
+                username=user.username,
+                display_name=user.display_name,
+                email=user.email,
+                role=membership.role,
+            )
+            for membership, user in rows
+        ]
+
+    async def add_workspace_member(
+        self, workspace_id: Id, identifier: str, role: WorkspaceRole
+    ) -> MemberRef:
+        async with UnitOfWork(self._db) as uow:
+            user = await UserRepository(uow.session).find_by_identifier(identifier)
+            if user is None:
+                raise NotFound("用户", identifier)
+            memberships = MembershipRepository(uow.session)
+            if await memberships.get(workspace_id, user.id) is not None:
+                raise DomainError(Errors.VALIDATION_FAILED, f"{identifier} 已是本项目成员")
+            memberships.add(
+                Membership(
+                    workspace_id=workspace_id,
+                    user_id=user.id,
+                    role=role,
+                    tenant_scope="all",
+                    created_at=self._clock.now(),
+                )
+            )
+            await uow.commit()
+        return MemberRef(
+            user_id=user.id,
+            username=user.username,
+            display_name=user.display_name,
+            email=user.email,
+            role=role,
+        )
+
+    async def set_workspace_member_role(
+        self, workspace_id: Id, user_id: Id, role: WorkspaceRole
+    ) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await MembershipRepository(uow.session).set_role(workspace_id, user_id, role)
+            await uow.commit()
+        # 角色变了，旧会话里的权限快照作废
+        await self.revoke_user_sessions(user_id, "role changed")
+
+    async def remove_workspace_member(self, workspace_id: Id, user_id: Id) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await MembershipRepository(uow.session).remove(workspace_id, user_id)
+            await uow.commit()
+        await self.revoke_user_sessions(user_id, "removed from workspace")
 
     async def _resolve_workspace(
         self, workspaces: WorkspaceRepository, user_id: Id, ref: str | None

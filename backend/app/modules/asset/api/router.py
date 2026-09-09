@@ -102,7 +102,7 @@ async def register_agent(
     assert_permission(container, actor, Permission.ASSET_CREATE)
     asset = await assets.register_agent(
         workspace_id=actor.workspace_id,
-        owner_id=actor.user_id,
+        owner_id=payload.owner_id or actor.user_id,
         name=payload.name,
         description=payload.description,
         connect_type=payload.connect_type,
