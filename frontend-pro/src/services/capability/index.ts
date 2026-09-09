@@ -1,4 +1,4 @@
-import { request } from '@umijs/max';
+import { call, withWorkspace } from '@/services/eval/http';
 
 /**
  * 能力资产（Skill / MCP / 知识库）管理接口。
@@ -93,30 +93,71 @@ export type CreateCapabilityPayload = {
   tenant_id?: string | null;
 };
 
-const headers = (workspaceId: string) => ({ 'x-workspace-id': workspaceId });
+export type CapabilityValidation = {
+  valid: boolean;
+  issues: Array<{ path: string; code: string; message: string }>;
+};
+
+export type McpHealthCheck = {
+  healthy: boolean;
+  latency_ms: number | null;
+  protocol_version?: string;
+  checked_at: string;
+  error?: string;
+};
+
+export type McpDiscovery = {
+  tools: Array<{
+    name: string;
+    description: string;
+    input_schema: Record<string, unknown>;
+  }>;
+  prompts?: Array<{ name: string; description?: string }>;
+  resources?: Array<{ uri: string; name: string; mime_type?: string }>;
+};
+
+export type KnowledgeIndexRun = {
+  run_id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  queued_at?: string;
+};
+
+export type RetrievalTestResult = {
+  query: string;
+  latency_ms: number;
+  matches: Array<{
+    id: string;
+    source_id: string;
+    title?: string;
+    content: string;
+    score: number;
+    metadata?: Record<string, unknown>;
+  }>;
+};
 
 export const listCapabilityAssets = (workspaceId: string, kind: CapabilityKind) =>
-  request<{ items: CapabilityAsset[] }>('/api/v1/assets', {
+  call<{ items: CapabilityAsset[] }>('/api/v1/assets', {
     params: { kind },
-    headers: headers(workspaceId),
-    withCredentials: true,
+    ...withWorkspace(workspaceId),
   });
+
+export const getCapabilityAsset = (workspaceId: string, assetId: string) =>
+  call<CapabilityAsset>(`/api/v1/assets/${assetId}`, withWorkspace(workspaceId));
 
 export const createCapabilityAsset = (
   workspaceId: string,
   payload: CreateCapabilityPayload,
 ) =>
-  request<CapabilityAsset>('/api/v1/assets', {
+  call<CapabilityAsset>('/api/v1/assets', {
     method: 'POST',
     data: payload,
-    headers: headers(workspaceId),
-    withCredentials: true,
+    ...withWorkspace(workspaceId),
   });
 
 export const listCapabilityVersions = (workspaceId: string, assetId: string) =>
-  request<{ items: CapabilityVersion[] }>(
+  call<{ items: CapabilityVersion[] }>(
     `/api/v1/assets/${assetId}/versions`,
-    { headers: headers(workspaceId), withCredentials: true },
+    withWorkspace(workspaceId),
   );
 
 export const createCapabilityVersion = (
@@ -124,17 +165,16 @@ export const createCapabilityVersion = (
   assetId: string,
   payload: { spec: Record<string, unknown>; version_label?: string },
 ) =>
-  request<CapabilityVersion>(`/api/v1/assets/${assetId}/versions`, {
+  call<CapabilityVersion>(`/api/v1/assets/${assetId}/versions`, {
     method: 'POST',
     data: payload,
-    headers: headers(workspaceId),
-    withCredentials: true,
+    ...withWorkspace(workspaceId),
   });
 
 export const listProviderBindings = (workspaceId: string, assetId: string) =>
-  request<{ items: CapabilityBinding[] }>(
+  call<{ items: CapabilityBinding[] }>(
     `/api/v1/assets/${assetId}/bindings`,
-    { headers: headers(workspaceId), withCredentials: true },
+    withWorkspace(workspaceId),
   );
 
 export const getResourceMetrics = (
@@ -143,11 +183,74 @@ export const getResourceMetrics = (
   versionId: string,
   windowHours = 24,
 ) =>
-  request<ResourceMetrics>(
+  call<ResourceMetrics>(
     `/api/v1/assets/${assetId}/versions/${versionId}/metrics`,
     {
       params: { window_hours: windowHours },
-      headers: headers(workspaceId),
-      withCredentials: true,
+      ...withWorkspace(workspaceId),
     },
+  );
+
+/** The endpoints below are the management-plane contract reserved for the backend. */
+export const validateCapabilitySpec = (
+  workspaceId: string,
+  kind: CapabilityKind,
+  spec: Record<string, unknown>,
+) =>
+  call<CapabilityValidation>('/api/v1/assets/validate', {
+    method: 'POST',
+    data: { kind, spec },
+    ...withWorkspace(workspaceId),
+  });
+
+export const promoteCapabilityVersion = (
+  workspaceId: string,
+  assetId: string,
+  versionId: string,
+  payload: { channel: ChannelName; evidence_ids?: string[] },
+) =>
+  call<CapabilityAsset>(
+    `/api/v1/assets/${assetId}/versions/${versionId}/promote`,
+    { method: 'POST', data: payload, ...withWorkspace(workspaceId) },
+  );
+
+export const checkMcpConnection = (
+  workspaceId: string,
+  assetId: string,
+  versionId: string,
+) =>
+  call<McpHealthCheck>(
+    `/api/v1/assets/${assetId}/versions/${versionId}/mcp-health-checks`,
+    { method: 'POST', ...withWorkspace(workspaceId) },
+  );
+
+export const discoverMcpCapabilities = (
+  workspaceId: string,
+  assetId: string,
+  versionId: string,
+) =>
+  call<McpDiscovery>(
+    `/api/v1/assets/${assetId}/versions/${versionId}/mcp-discovery`,
+    { method: 'POST', ...withWorkspace(workspaceId) },
+  );
+
+export const rebuildKnowledgeIndex = (
+  workspaceId: string,
+  assetId: string,
+  versionId: string,
+) =>
+  call<KnowledgeIndexRun>(
+    `/api/v1/assets/${assetId}/versions/${versionId}/index-runs`,
+    { method: 'POST', ...withWorkspace(workspaceId) },
+  );
+
+export const testKnowledgeRetrieval = (
+  workspaceId: string,
+  assetId: string,
+  versionId: string,
+  payload: { query: string; filters?: Record<string, unknown> },
+) =>
+  call<RetrievalTestResult>(
+    `/api/v1/assets/${assetId}/versions/${versionId}/retrieval-tests`,
+    { method: 'POST', data: payload, ...withWorkspace(workspaceId) },
   );

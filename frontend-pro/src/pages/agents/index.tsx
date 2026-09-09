@@ -33,6 +33,8 @@ import type { EvalAgent } from '@/services/eval/agents';
 import { getAgents, promoteAgentVersion, registerAgent } from '@/services/eval/agents';
 import type { AgentCredential } from '@/services/eval/credentials';
 import { getAgentCredentials } from '@/services/eval/credentials';
+import type { Member } from '@/services/eval/members';
+import { getWorkspaceMembers } from '@/services/eval/members';
 import styles from './style.module.css';
 
 type Lifecycle = 'test' | 'livesh' | 'live';
@@ -324,6 +326,7 @@ export default function AgentsPage() {
   const [form] = Form.useForm();
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [credentials, setCredentials] = useState<AgentCredential[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [lifecycle, setLifecycle] = useState<'all' | Lifecycle>('all');
@@ -343,6 +346,8 @@ export default function AgentsPage() {
       setAgents(result.items.map(normalizeAgent));
       const keys = await getAgentCredentials(workspace.id);
       setCredentials(keys.items);
+      const roster = await getWorkspaceMembers(workspace.id);
+      setMembers(roster.items);
     } catch {
       setAgents([]);
     } finally {
@@ -394,6 +399,7 @@ export default function AgentsPage() {
       await registerAgent(workspace.id, {
         name: values.name,
         description: values.description ?? '',
+        owner_id: values.owner_id,
         connect_type: connectKind,
         source,
       });
@@ -910,10 +916,17 @@ export default function AgentsPage() {
             </Form.Item>
             <Form.Item
               label="负责人"
-              name="owner"
-              rules={[{ required: true, message: '请输入负责人' }]}
+              name="owner_id"
+              rules={[{ required: true, message: '请选择负责人' }]}
             >
-              <Input placeholder="团队或成员" />
+              {/* 负责人决定变更责任，必须从工作区成员里选，不能收任意字符串 */}
+              <Select
+                placeholder="选择工作区成员"
+                options={members.map((item) => ({
+                  label: `${item.display_name}（${item.username}）`,
+                  value: item.user_id,
+                }))}
+              />
             </Form.Item>
           </div>
           <Form.Item label="用途说明" name="description">

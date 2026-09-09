@@ -47,5 +47,14 @@ export default [
       },
     ],
   },
+  {
+    path: '/settings',
+    name: '组织与成员',
+    icon: 'TeamOutlined',
+    routes: [
+      { path: '/settings', redirect: '/settings/members' },
+      { path: '/settings/members', name: '成员管理', component: './settings/members' },
+    ],
+  },
   { path: '/*', layout: false, component: './exception/404' },
 ];

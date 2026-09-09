@@ -14,6 +14,7 @@ export type EvalAgent = {
   name: string;
   description: string;
   owner: string;
+  owner_id?: string;
   connect_type: string;
   status: string;
   environment: string;
@@ -159,6 +160,8 @@ export const registerAgent = (
   payload: {
     name: string;
     description?: string;
+    /** 负责人：工作区成员 ID。留空则后端默认当前登录用户。 */
+    owner_id?: string;
     connect_type: AgentSourceKind;
     source?: Record<string, unknown>;
   },
