@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.agent-eval/
+.data/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+frontend/node_modules/
+frontend/*.tsbuildinfo

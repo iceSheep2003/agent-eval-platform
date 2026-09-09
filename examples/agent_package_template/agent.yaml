@@ -1,0 +1,25 @@
+apiVersion: agent.eval-loom/v1
+kind: Agent
+metadata:
+  name: replace-with-your-agent-name
+  version: 0.1.0
+runtime:
+  language: python
+  entrypoint: run.py
+  command: ["python", "run.py"]
+  port: 8080
+  healthcheck: /health
+  invoke: /invoke
+  timeoutSeconds: 30
+observability:
+  provider: deepeval
+  requiredSpanTypes: [agent, llm, tool, retriever]
+  flushOnShutdown: true
+benchmark:
+  protocol: agentic-bench/v1
+  adapter: agentic_bench_adapter:AgenticBenchAdapter
+security:
+  runAsNonRoot: true
+  readOnlyRootFilesystem: true
+  credentialsFromEnvironment: true
+

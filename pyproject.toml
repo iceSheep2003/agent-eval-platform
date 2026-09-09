@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-eval-sdk"
+version = "0.1.0"
+description = "Python-first tracing and offline evaluation SDK for AI agents"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Agent Evaluation SDK Contributors" }]
+dependencies = []
+
+[project.optional-dependencies]
+http = []
+pytest = ["pytest>=8"]
+deepeval = ["deepeval>=2.0"]
+platform = ["cryptography>=42", "fastapi>=0.115", "uvicorn>=0.30", "python-multipart>=0.0.9"]
+
+[project.scripts]
+agent-eval = "agent_eval.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agent_eval = ["py.typed"]

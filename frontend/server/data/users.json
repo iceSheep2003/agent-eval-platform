@@ -1,0 +1,22 @@
+[
+  {
+    "id": "user_admin",
+    "username": "admin",
+    "email": "admin@evalloom.local",
+    "displayName": "System Admin",
+    "role": "Org Owner",
+    "workspaceIds": ["eval-dev", "support-lab"],
+    "salt": "1c44ad4e334d2d1ccf41a1ad46c06553",
+    "passwordHash": "752ef4a6fa4a11d68771466f830d815f55245fe7c4bafbc6a2efaee8aa48442d8143ce1f62aab090c73288f6c06b35e1954511331a3d9b39fd0592e093e7ff3e"
+  },
+  {
+    "id": "user_demo",
+    "username": "demo",
+    "email": "demo@evalloom.local",
+    "displayName": "Demo Evaluator",
+    "role": "Evaluator",
+    "workspaceIds": ["eval-dev"],
+    "salt": "9b29e87d69520deb3d7577e6af9c0317",
+    "passwordHash": "b5e8fb7f9f2058c0a10dc5204fb66edddfac43497f469248027eedeaaf4d5e970a5cd2e6cba3cf146ef543bc96131a7527868eb869cdb8d4eea2930c1f46674b"
+  }
+]
