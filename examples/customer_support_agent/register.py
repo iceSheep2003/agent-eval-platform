@@ -39,10 +39,11 @@ def register(base: str, identifier: str, password: str, workspace: str, name: st
             },
         )
         agent.raise_for_status()
-        agent_id = agent.json()["id"]
+        # 平台统一响应封装：{success, data, errorCode, errorMessage, showType}
+        agent_id = agent.json()["data"]["id"]
         key = client.post(f"/api/agents/{agent_id}/sdk-keys", json={"name": "default"})
         key.raise_for_status()
-        body = key.json()
+        body = key.json()["data"]
         return {"agent_id": agent_id, "key": body["key"], "ingest_url": body["ingest_url"]}
 
 

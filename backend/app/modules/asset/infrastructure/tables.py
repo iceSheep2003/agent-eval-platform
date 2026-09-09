@@ -1,0 +1,99 @@
+"""asset 模块的 ORM 表。表名统一 `asset_` 前缀（表所有权约定）。"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import JSON, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from ....persistence.base import Base, TimestampMixin
+
+
+class AssetRow(Base, TimestampMixin):
+    __tablename__ = "asset_asset"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "kind", "name", name="uq_asset_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    owner_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    lifecycle: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    connect_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    tenant_scope: Mapped[str] = mapped_column(String(24), nullable=False, default="workspace_shared")
+    tenant_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class AssetVersionRow(Base, TimestampMixin):
+    __tablename__ = "asset_version"
+    __table_args__ = (
+        UniqueConstraint("asset_id", "version_label", name="uq_version_label"),
+        UniqueConstraint("asset_id", "spec_digest", name="uq_version_digest"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    asset_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("asset_asset.id"), nullable=False, index=True
+    )
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    version_label: Mapped[str] = mapped_column(String(32), nullable=False)
+    spec: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    spec_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    lifecycle: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    asset: Mapped["AssetRow"] = relationship()
+
+
+class ChannelBindingRow(Base, TimestampMixin):
+    __tablename__ = "asset_channel_binding"
+    __table_args__ = (UniqueConstraint("asset_id", "channel", name="uq_channel"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    asset_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("asset_asset.id"), nullable=False, index=True
+    )
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    channel: Mapped[str] = mapped_column(String(16), nullable=False)
+    version_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    bound_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    asset: Mapped["AssetRow"] = relationship()
+
+
+class CredentialRow(Base, TimestampMixin):
+    __tablename__ = "asset_credential"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    asset_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, default="default")
+    prefix: Mapped[str] = mapped_column(String(8), nullable=False)
+    #: sha256；明文只在创建响应里出现一次
+    secret_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    last_four: Mapped[str] = mapped_column(String(8), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ArtifactRow(Base, TimestampMixin):
+    __tablename__ = "asset_artifact"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    asset_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    version_label: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    build_status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
