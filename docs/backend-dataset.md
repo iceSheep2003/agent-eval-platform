@@ -248,7 +248,90 @@ class ReviewState:
 
 ---
 
-## 7. 与策略、门禁、版本比较的关系
+## 7. 回流自动化：badcase 挖掘 Agent
+
+生产 badcase 是回归资产的主要来源，但不能靠人工翻 Trace，也不该让挖掘 Agent 直接写库。
+设计成「**机器挖 + 人把关**」的流水线，每一步都可审计。
+
+### 7.1 流水线
+
+```text
+生产 Trace 流
+  ①候选识别   多信号判定「这条可能有问题」
+  ②聚类去重   同一根因合并——否则一个缺陷会灌进上千条样本
+  ③抽样       每个 cluster 取 1–3 条代表
+  ④脱敏       去掉可识别信息，保留结构与统计
+  ⑤起草       task + expected_output 草稿 + 依据（引用规则 / 知识 / 相似样本）
+  ⑥落草稿     写入数据集草稿样本，review=pending，血缘记全
+  ⑦人工复核   approved / rejected
+  ⑧固化       产生新的数据集版本
+```
+
+**挖掘 Agent 的权限被硬性收窄：只能做到第 ⑥ 步。**
+它没有 `proposal:review`，也没有任何 `version:promote:*`——这条约束写在
+`Authorizer` 的 `MACHINE_FORBIDDEN` 里，是代码级保证而不是流程约定。
+
+### 7.2 候选识别的信号
+
+| 信号类型 | 例子 | 特点 |
+| --- | --- | --- |
+| 规则违规 | 命中安全 / 合规策略 | 必须处理，优先级最高 |
+| 显式反馈 | 用户负评、工单、人工标注 | 最准，但稀少 |
+| 执行异常 | `status ∈ {error, timeout}`、工具调用失败、重试 | 量大，噪声也大 |
+| 过程异常 | 步数超限、循环调用、延迟 / 成本突增 | 结果可能对，过程有问题 |
+| 模型判定 | LLM judge 打分低于阈值 | 覆盖广，但本身需要被监控 |
+
+多信号叠加时优先级 **规则违规 > 显式反馈 > 执行异常 > 模型判定**。
+只靠模型判定会把 judge 的偏见固化进回归集。
+
+### 7.3 聚类是必需的，不是优化
+
+同一个缺陷在生产里会产生成百上千条失败 Trace。逐条沉淀的后果有两个：
+回归集一周内膨胀到跑不完；指标被同一类样本主导，看不出别的退化。
+
+```python
+class SampleLineage:
+    ...
+    cluster_key: str | None      # 同根因聚类键：失败位置 + 错误类型 + 输入特征
+    mined_by: Id | None          # 哪个挖掘任务 / Agent 产生
+    signals: tuple[str, ...]     # 命中的信号
+```
+
+`cluster_key` 刻意**不用 Trace ID**——它要能把「同一个 bug 的不同表现」归到一起。
+每个 cluster 的抽样上限可配（默认 3）。
+
+### 7.4 起草与复核
+
+已定口径：**LLM 起草 + 人工确认**。起草必须留依据，否则复核者无从判断：
+
+```python
+class ReviewState:
+    status: Literal["pending", "approved", "rejected"]
+    draft_source: Literal["manual", "llm", "mixed"]
+    draft_confidence: float | None
+    draft_evidence: tuple[Id, ...]   # 起草时引用的 Trace / 知识条目 / 规则
+    reviewer_id: Id | None
+    reviewed_at: datetime | None
+    note: str | None
+```
+
+**未经人工确认的草稿样本不得进入 `purpose=gate` 的数据集**——
+门禁的判据必须有人背书。
+
+### 7.5 闭环度量
+
+| 指标 | 含义 | 危险信号 |
+| --- | --- | --- |
+| `trace_to_sample_rate` | 生产失败中被沉淀为样本的比例 | 过低 = 问题没进闭环 |
+| `sample_recurrence_rate` | 已沉淀样本在后续评测中再次失败的比例 | 过高 = 修复无效，或样本没绑对 |
+| `cluster_growth_rate` | 新出现的 cluster 数 | 突增 = 出现新类型缺陷 |
+| `draft_acceptance_rate` | 起草被人工接受的比例 | 过低 = 起草质量差，白费复核人力 |
+
+第三个是「有没有新问题」的早期信号，比总失败率敏感得多。
+
+---
+
+## 8. 与策略、门禁、版本比较的关系
 
 ```text
 DatasetVersion  ──被引用──→  EvaluationTemplate  ──冻结快照──→  Run
@@ -266,7 +349,7 @@ DatasetVersion  ──被引用──→  EvaluationTemplate  ──冻结快照
 
 ---
 
-## 8. P0 落地范围
+## 9. P0 落地范围
 
 **做**：
 - 四个维度的建模与校验（origin / purpose / task_shape / stages）
@@ -282,11 +365,18 @@ DatasetVersion  ──被引用──→  EvaluationTemplate  ──冻结快照
 
 ---
 
-## 9. 待确认的产品口径
+## 10. 已定口径与待确认项
 
-1. **一个数据集能否混合 `task_shape`？** 当前设计建议一个版本内保持一致，便于比较。
-2. **`stages` 是硬约束还是建议？** 当前按硬约束实现（策略绑定校验），
-   如果希望宽松，改成只告警即可。
-3. **回流样本的 `expected_output` 由谁补？** 当前默认人工；
-   是否允许 LLM 起草 + 人工确认，需要产品定。
-4. **跨租户样本能否共用？** 当前默认不能，需要显式确认。
+**已定（实现时按此执行）**：
+
+1. `stages` 是**硬约束**——策略绑定时校验 `template.stage ∈ dataset.stages`，不匹配即拒绝。
+2. 回流样本的 `expected_output` 走 **LLM 起草 + 人工确认**，
+   未确认的草稿不得进入 `purpose=gate` 的数据集。
+3. badcase 挖掘由**机器挖 + 人把关**，挖掘 Agent 只能写草稿，不能复核、不能晋级。
+
+**仍待确认**：
+
+1. **一个数据集版本能否混合 `task_shape` / `protocol`？** 当前建议保持一致，便于比较。
+2. **跨租户样本能否共用？** 当前默认不能，需要显式确认。
+3. **每个 cluster 的抽样上限**（默认 3）是否需要按 `purpose` 区分？
+   门禁数据集可能希望每个根因只留 1 条，监控数据集可以多留。
