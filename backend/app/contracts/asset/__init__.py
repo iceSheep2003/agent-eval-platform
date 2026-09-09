@@ -26,6 +26,8 @@ class AssetRef:
     name: str
     owner_id: Id
     lifecycle: str
+    #: 展示用说明。portal 要把它渲染在 Agent 卡片上。
+    description: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +44,8 @@ class CredentialContext:
     tenant_id: Id | None
     kind: CredentialKind
     name: str
+    #: 部署密钥限定的通道；未限定时为 None（SDK 上报密钥，或不限通道的部署密钥）。
+    channel: Channel | None = None
 
 
 @runtime_checkable
@@ -77,6 +81,15 @@ class AssetQueryPort(Protocol):
     async def version_of_channel(
         self, asset_id: Id, channel: Channel, workspace_id: Id
     ) -> AssetVersionRef | None: ...
+
+    async def get_credential_context(
+        self, credential_id: Id, workspace_id: Id
+    ) -> CredentialContext | None:
+        """按 ID 取凭证上下文（不校验明文）。已撤销/过期的一律返回 None。
+
+        portal 只存凭证**引用**，所以每次对话前都要用它确认这把钥匙还作数。
+        """
+        ...
 
 
 __all__ = [

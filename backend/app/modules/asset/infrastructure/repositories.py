@@ -216,18 +216,27 @@ class ChannelBindingRepository:
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _binding(row) if row else None
 
-    def upsert(self, binding: ChannelBinding, workspace_id: str) -> None:
-        self._session.add(
-            ChannelBindingRow(
-                id=f"{binding.asset_id}:{binding.channel.value}",
-                asset_id=binding.asset_id,
-                workspace_id=workspace_id,
-                channel=binding.channel.value,
-                version_id=binding.version_id,
-                bound_at=binding.bound_at,
-                bound_by=binding.bound_by,
-            )
+    async def upsert(self, binding: ChannelBinding, workspace_id: str) -> None:
+        """按 `(asset_id, channel)` 覆盖写入。重新绑同一通道只改指针，不新增行。"""
+        row = await self._session.get(
+            ChannelBindingRow, f"{binding.asset_id}:{binding.channel.value}"
         )
+        if row is None:
+            self._session.add(
+                ChannelBindingRow(
+                    id=f"{binding.asset_id}:{binding.channel.value}",
+                    asset_id=binding.asset_id,
+                    workspace_id=workspace_id,
+                    channel=binding.channel.value,
+                    version_id=binding.version_id,
+                    bound_at=binding.bound_at,
+                    bound_by=binding.bound_by,
+                )
+            )
+            return
+        row.version_id = binding.version_id
+        row.bound_at = binding.bound_at
+        row.bound_by = binding.bound_by
 
 
 class CredentialRepository:

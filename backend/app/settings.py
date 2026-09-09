@@ -50,6 +50,10 @@ class Settings:
     session_absolute_hours: int = 24
     csrf_enabled: bool = True
 
+    # 展示平台（portal）：**独立账号体系**，cookie 名与平台不共用
+    portal_cookie_name: str = "eval_loom_portal_session"
+    portal_session_hours: int = 24
+
     # 认证
     require_sso: bool = False
 
@@ -64,7 +68,14 @@ class Settings:
     log_format: str = "console"  # console | json（k8s 日志采集用 json）
 
     cors_origins: tuple[str, ...] = field(
-        default=("http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:4173")
+        default=(
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+            "http://localhost:4173",
+            # 展示平台（frontend-showcase）的开发服务器
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+        )
     )
 
     @property
@@ -90,6 +101,7 @@ class Settings:
             cookie_secure=(env == "production"),
             session_idle_hours=_int_env("EVAL_LOOM_SESSION_IDLE_HOURS", 4),
             session_absolute_hours=_int_env("EVAL_LOOM_SESSION_ABSOLUTE_HOURS", 24),
+            portal_session_hours=_int_env("EVAL_LOOM_PORTAL_SESSION_HOURS", 24),
             csrf_enabled=_bool_env("EVAL_LOOM_CSRF_ENABLED", True),
             require_sso=_bool_env("AUTH_REQUIRE_SSO", False),
             command_lease_seconds=_int_env("EVAL_LOOM_COMMAND_LEASE_SECONDS", 60),
@@ -106,6 +118,8 @@ def _cors_origins() -> tuple[str, ...]:
             "http://localhost:8000",
             "http://127.0.0.1:8000",
             "http://localhost:4173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
         )
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 

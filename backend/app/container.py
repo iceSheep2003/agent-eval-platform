@@ -18,6 +18,7 @@ from .runtime_adapters.local_sandbox import LocalSandboxRuntime
 from .modules.identity.application.services import IdentityService
 from .modules.identity.domain.authorizer import Authorizer
 from .modules.observability.application.services import TraceService
+from .modules.portal.application.services import PortalAuthService, PortalService
 from .persistence import CommandQueue, Database, QueueConfig, create_engine
 from .settings import Settings
 from .shared.clock import Clock, SystemClock
@@ -38,6 +39,8 @@ class Container:
     invoke: InvokeService
     execution_handlers: ExecutionHandlers
     traces: TraceService
+    portal_auth: PortalAuthService
+    portal: PortalService
     command_queue: CommandQueue
 
     @classmethod
@@ -61,7 +64,6 @@ class Container:
         runs = RunService(
             database, resolved_clock, assets, datasets, evaluations, evaluations, sandbox
         )
-        invoke = InvokeService(assets, sandbox)
         execution_handlers = ExecutionHandlers(
             database=database,
             clock=resolved_clock,
@@ -71,6 +73,11 @@ class Container:
             runtime=sandbox,
         )
         traces = TraceService(database, resolved_clock, assets)
+        invoke = InvokeService(assets, sandbox, traces=traces, clock=resolved_clock)
+        portal_auth = PortalAuthService(
+            database, resolved_clock, session_hours=resolved.portal_session_hours
+        )
+        portal = PortalService(database, resolved_clock, assets, invoke)
         command_queue = CommandQueue(
             database,
             resolved_clock,
@@ -93,6 +100,8 @@ class Container:
             invoke=invoke,
             execution_handlers=execution_handlers,
             traces=traces,
+            portal_auth=portal_auth,
+            portal=portal,
             command_queue=command_queue,
         )
 

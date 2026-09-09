@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from ..domain.models import Run, RunResult, ScoreRecord, Trial
+
+
+class InvokeRequest(BaseModel):
+    """`POST /v1/agents/{id}/invoke`。`channel` 决定打哪个版本，不给版本号。"""
+
+    input: str = Field(min_length=1)
+    channel: Literal["test", "liversh", "live"] = "live"
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    timeout_seconds: float = Field(default=60.0, gt=0, le=600)
 
 
 class CreateRunRequest(BaseModel):

@@ -37,13 +37,34 @@ def _migrations() -> list[Path]:
     return sorted(path for path in VERSIONS_DIR.glob("*.py") if path.name != "__init__.py")
 
 
-def _branch_labels(path: Path) -> tuple[str, ...]:
+def _assignments(path: Path) -> dict[str, object]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: dict[str, object] = {}
     for node in tree.body:
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "branch_labels":
-                    return tuple(ast.literal_eval(node.value))
+                if isinstance(target, ast.Name):
+                    try:
+                        found[target.id] = ast.literal_eval(node.value)
+                    except ValueError:
+                        found[target.id] = None
+    return found
+
+
+def _branch_labels(path: Path) -> tuple[str, ...]:
+    """分支标签。
+
+    Alembic 只允许**分支的首个** revision 声明 `branch_labels`，同一模块的后续迁移
+    必须留空（否则报 `Branch name already used`）。所以这里对后者回退到
+    `revision` 的模块前缀——`portal_0002` → `portal`，校验强度不变。
+    """
+    values = _assignments(path)
+    labels = values.get("branch_labels")
+    if labels:
+        return tuple(labels)  # type: ignore[arg-type]
+    revision = values.get("revision")
+    if isinstance(revision, str) and "_" in revision:
+        return (revision.split("_", 1)[0],)
     return ()
 
 

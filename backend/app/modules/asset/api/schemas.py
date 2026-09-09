@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,20 @@ class CreateVersionRequest(BaseModel):
 
 
 class SdkKeyRequest(BaseModel):
+    name: str = Field(default="default", max_length=128)
+    expires_at: datetime | None = None
+
+
+class BindChannelRequest(BaseModel):
+    """`POST /api/agents/{id}/channels/{channel}/bind`。"""
+
+    version_id: str = Field(min_length=1, max_length=64)
+
+
+class DeploymentKeyRequest(BaseModel):
+    """`POST /api/agents/{id}/deployment-keys`：签发一把**限定通道**的 `evl_` 密钥。"""
+
+    channel: Literal["test", "liversh", "live"]
     name: str = Field(default="default", max_length=128)
     expires_at: datetime | None = None
 
@@ -81,6 +95,21 @@ class IssuedCredentialDTO(BaseModel):
     created_at: datetime
 
 
+class DeploymentKeyDTO(BaseModel):
+    """部署密钥。`key` 只在本响应里出现一次。"""
+
+    id: str
+    key: str
+    prefix: str
+    last_four: str
+    agent_id: str
+    channel: str
+    invoke_url: str
+    name: str
+    expires_at: datetime | None
+    created_at: datetime
+
+
 class CredentialDTO(BaseModel):
     id: str
     name: str
@@ -89,6 +118,7 @@ class CredentialDTO(BaseModel):
     kind: str
     agent_id: str | None
     tenant_id: str | None
+    channel: str | None = None
     status: str
     environment: str | None = None
     expires_at: datetime | None

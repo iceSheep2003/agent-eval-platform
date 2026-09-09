@@ -8,13 +8,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
-from ....contracts.asset import AssetQueryPort
+from ....contracts.asset import AssetQueryPort, AssetVersionRef
 from ....contracts.common import (
+    Channel,
     Determinism,
     EvaluationStage,
     ExecutionStatus,
@@ -23,6 +25,7 @@ from ....contracts.common import (
     Id,
     RunStage,
     RunStatus,
+    TraceOrigin,
     Verdict,
 )
 from ....contracts.dataset import SampleReaderPort, SampleRef
@@ -38,9 +41,10 @@ from ....contracts.evaluation import (
     TemplateSnapshot,
     TemplateSnapshotPort,
 )
+from ....contracts.observability import InvocationTrace, TraceWriterPort
 from ....persistence import Command, UnitOfWork
 from ....persistence.database import Database
-from ....shared.clock import Clock
+from ....shared.clock import Clock, SystemClock
 from ....shared.ids import new_id
 from ..domain.models import Run, RunResult, ScoreRecord, Trial, summarize
 from ..infrastructure.evaluators import MetricOutcome, aggregate_verdict, evaluate_metric
@@ -654,6 +658,15 @@ def _dimension_scores(
 # 按通道调用（portal 消费）
 # --------------------------------------------------------------------------- #
 
+#: 通道 → Trace 来源。影子通道的调用就是影子流量，不能记成生产。
+_ORIGIN_BY_CHANNEL = {
+    Channel.TEST: TraceOrigin.EVALUATION,
+    Channel.LIVESH: TraceOrigin.SHADOW,
+    Channel.LIVE: TraceOrigin.PRODUCTION,
+}
+
+logger = logging.getLogger(__name__)
+
 
 class InvokeService:
     """实现 `contracts.execution.InvokePort`：按通道打当前绑定的版本。
@@ -661,9 +674,18 @@ class InvokeService:
     与评测共用同一个 `RuntimePort`——所以线上调用和离线评测不会各维护一套协议。
     """
 
-    def __init__(self, assets: AssetQueryPort, runtime: RuntimePort) -> None:
+    def __init__(
+        self,
+        assets: AssetQueryPort,
+        runtime: RuntimePort,
+        *,
+        traces: TraceWriterPort | None = None,
+        clock: Clock | None = None,
+    ) -> None:
         self._assets = assets
         self._runtime = runtime
+        self._traces = traces
+        self._clock = clock or SystemClock()
 
     async def invoke_channel(self, request: ChannelInvocation) -> InvokeResult:
         version = await self._assets.version_of_channel(
@@ -671,14 +693,14 @@ class InvokeService:
         )
         if version is None:
             raise DomainError(
-                Errors.NOT_FOUND,
+                Errors.CHANNEL_UNBOUND,
                 f"Agent {request.asset_id} 的 {request.channel.value} 通道没有绑定版本",
                 channel=request.channel.value,
             )
         if not version.entrypoint:
             raise DomainError(
                 Errors.RUN_SUBJECT_INCOMPLETE,
-                f"版本 {version.version_label} 没有 entrypoint，无法调用",
+                f"版本 {version.version_label} 没有 entrypoint（sdk 接入不可调用）",
             )
 
         ctx = InvocationContext(
@@ -687,6 +709,14 @@ class InvokeService:
             timeout_seconds=request.timeout_seconds,
             cost_budget_usd=request.cost_budget_usd,
         )
+        payload: dict[str, Any] = {
+            "__entrypoint__": version.entrypoint,
+            "input": request.input,
+        }
+        if request.messages:
+            payload["messages"] = [dict(item) for item in request.messages]
+
+        started_at = self._clock.now()
         handle = await self._runtime.provision(
             RuntimeSpec(
                 asset_id=version.asset_id,
@@ -698,20 +728,53 @@ class InvokeService:
             ctx,
         )
         try:
-            result = await self._runtime.invoke(
-                handle, {"__entrypoint__": version.entrypoint, "input": request.input}, ctx
-            )
+            result = await self._runtime.invoke(handle, payload, ctx)
         finally:
             await self._runtime.teardown(handle)
 
+        trace_id = await self._record(request, version, result, started_at)
         return InvokeResult(
             output=result.output,
             error=result.error,
-            trace_id=result.trace_id,
+            trace_id=trace_id,
             duration_ms=result.duration_ms,
             cost_usd=result.cost_usd,
             version_label=version.version_label,
         )
+
+    async def _record(
+        self,
+        request: ChannelInvocation,
+        version: AssetVersionRef,
+        result: InvokeResult,
+        started_at: datetime,
+    ) -> Id | None:
+        """落一条 Trace。**记不上也不能让对话失败**——所以整体吞异常并降级。"""
+        if self._traces is None:
+            return None
+        try:
+            return await self._traces.record_invocation(
+                InvocationTrace(
+                    workspace_id=request.workspace_id,
+                    tenant_id=request.tenant_id,
+                    asset_id=version.asset_id,
+                    asset_version_id=version.id,
+                    channel=request.channel,
+                    origin=_ORIGIN_BY_CHANNEL[request.channel],
+                    external_trace_id=f"gw-{request.request_id or new_id('invocation')}",
+                    name=f"{request.channel.value} 通道调用",
+                    status="error" if result.error else "success",
+                    started_at=started_at,
+                    ended_at=self._clock.now(),
+                    input=request.input,
+                    output=result.output,
+                    error=result.error,
+                    usage=result.usage,
+                )
+            )
+        except Exception:  # noqa: BLE001 - 观测失败不该影响业务调用
+            logger.warning("记录调用 Trace 失败", exc_info=True)
+            return None
 
     async def stream_channel(self, request: ChannelInvocation):
         """流式调用。

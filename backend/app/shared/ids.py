@@ -50,11 +50,20 @@ PREFIXES: dict[str, str] = {
     "run": "run",
     "trial": "trl",
     "command": "cmd",
+    #: 网关/展示平台发起的一次调用（与 Run 无关，仅用于关联 Trace）
+    "invocation": "inv",
     # observability
     "trace": "trc",
     "span": "spn",
     "event": "evt",
     "score": "scr",
+    # portal（展示平台，独立账号体系）
+    "portal_user": "pu",
+    "portal_session": "ps",
+    "portal_project": "pp",
+    "portal_member": "pm",
+    "portal_agent": "pa",
+    "portal_channel": "pc",
     # improvement
     "proposal": "prp",
     "regression_sample": "rsm",

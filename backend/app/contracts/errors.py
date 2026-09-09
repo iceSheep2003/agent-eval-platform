@@ -43,6 +43,7 @@ class Errors:
     VERSION_IMMUTABLE = ErrorCode("version_immutable", 409, "已固化的版本不可修改")
     VERSION_DIGEST_CONFLICT = ErrorCode("version_digest_conflict", 409, "相同内容的版本已存在")
     CHANNEL_CONFLICT = ErrorCode("channel_conflict", 409, "该通道已绑定其他版本")
+    CHANNEL_UNBOUND = ErrorCode("channel_unbound", 409, "该通道尚未绑定版本，无法调用")
     PROMOTION_ORDER_VIOLATION = ErrorCode("promotion_order_violation", 409, "版本只能按 TEST→LIVESH→LIVE 晋级")
     GATE_BLOCKED = ErrorCode("gate_blocked", 409, "质量门禁未通过，禁止晋级")
     CREDENTIAL_SCOPE_VIOLATION = ErrorCode("credential_scope_violation", 403, "凭证不允许该操作")

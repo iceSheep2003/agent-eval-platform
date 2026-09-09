@@ -15,9 +15,11 @@ from typing import Any, Mapping, Sequence
 from ....contracts.asset import CredentialContext, CredentialResolverPort
 from ....contracts.common import Channel, Id, TraceOrigin
 from ....contracts.errors import DomainError, Errors, NotFound
+from ....contracts.observability import InvocationTrace
 from ....persistence import UnitOfWork
 from ....persistence.database import Database
 from ....shared.clock import Clock
+from ....shared.ids import new_id
 from ..domain.models import AgentMetrics, SpanNode, SpanRecord, TraceRecord, build_span_tree
 from ..infrastructure.repositories import TraceRepository
 from ..infrastructure.sdk_event_adapter import SdkEventAdapter, group_by_trace
@@ -131,6 +133,38 @@ class TraceService:
         if context is None or context.asset_id is None:
             raise DomainError(Errors.CREDENTIAL_EXPIRED, "密钥无效或已吊销")
         return context
+
+    async def record_invocation(self, trace: InvocationTrace) -> Id:
+        """记录一次平台自己发起的调用（网关/展示平台）。
+
+        实现 `contracts.observability.TraceWriterPort`。没有 Span——Span 是被测 Agent
+        自己通过 SDK 上报的，两条线在 `(asset_id, external_trace_id)` 上各占一行。
+        """
+        record = TraceRecord(
+            id=new_id("trace"),
+            workspace_id=trace.workspace_id,
+            tenant_id=trace.tenant_id,
+            origin=trace.origin,
+            asset_id=trace.asset_id,
+            asset_version_id=trace.asset_version_id,
+            channel=trace.channel,
+            run_id=None,
+            trial_id=None,
+            external_trace_id=trace.external_trace_id,
+            name=trace.name,
+            status=trace.status,
+            started_at=trace.started_at,
+            ended_at=trace.ended_at or self._clock.now(),
+            input=trace.input,
+            output=trace.output,
+            usage=trace.usage,
+            span_count=0,
+            ingested_via="gateway",
+        )
+        async with UnitOfWork(self._db) as uow:
+            trace_id, _, _ = await TraceRepository(uow.session).upsert(record, ())
+            await uow.commit()
+        return trace_id
 
     # -- 查询 ----------------------------------------------------------------
 

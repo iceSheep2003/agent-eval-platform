@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 from ....container import Container
 from ....contracts.common import Channel, CredentialKind
 from ....contracts.errors import NotFound
-from ....contracts.identity import Permission
+from ....contracts.identity import Permission, ResourceRef
 from ....schemas.response import list_response, ok
 from ....api.deps import Actor, assert_permission, get_container
 from ..application.services import AssetService
@@ -22,9 +22,12 @@ from .deps import get_asset_service, require_on_agent
 from .schemas import (
     AgentDTO,
     AgentVersionDTO,
+    BindChannelRequest,
     ChannelDTO,
     CreateVersionRequest,
     CredentialDTO,
+    DeploymentKeyDTO,
+    DeploymentKeyRequest,
     IssuedCredentialDTO,
     RegisterAgentRequest,
     SdkKeyRequest,
@@ -34,6 +37,16 @@ router = APIRouter(tags=["asset"])
 
 #: SDK 事件上报地址。Gateway/Ingest 属机器面，不走 /api 前缀。
 INGEST_PATH = "/v1/traces"
+
+#: 按通道调用地址。前端展示平台与外部集成都打这个。
+INVOKE_PATH = "/v1/agents/{agent_id}/invoke"
+
+#: 通道 → 绑定该通道所需的权限。复用已有权限点，不新造。
+_CHANNEL_PERMISSION = {
+    Channel.TEST: Permission.ASSET_UPDATE,
+    Channel.LIVESH: Permission.VERSION_PROMOTE_LIVESH,
+    Channel.LIVE: Permission.VERSION_PROMOTE_LIVE,
+}
 
 
 async def _agent_dto(assets: AssetService, asset: Asset) -> AgentDTO:
@@ -80,6 +93,7 @@ def _credential_dto(credential: Credential) -> CredentialDTO:
         kind=credential.kind.value,
         agent_id=credential.asset_id,
         tenant_id=credential.tenant_id,
+        channel=credential.channel.value if credential.channel else None,
         status=credential.status,
         expires_at=credential.expires_at,
         last_used_at=credential.last_used_at,
@@ -177,6 +191,80 @@ async def get_channels(
             for channel, state in states.items()
         ]
     )
+
+
+@router.post("/agents/{agent_id}/channels/{channel}/bind")
+async def bind_channel(
+    channel: Channel,
+    payload: BindChannelRequest,
+    asset: Annotated[Asset, Depends(require_on_agent(Permission.ASSET_READ))],
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    """把某个版本挂到通道上。**回退就是重新绑一个旧版本**，不删版本。"""
+    assert_permission(
+        container,
+        actor,
+        _CHANNEL_PERMISSION[channel],
+        ResourceRef(
+            kind="asset",
+            id=asset.id,
+            workspace_id=asset.workspace_id,
+            tenant_id=asset.tenant_id,
+            owner_id=asset.owner_id,
+        ),
+    )
+    binding = await assets.bind_channel(
+        asset_id=asset.id,
+        channel=channel,
+        version_id=payload.version_id,
+        workspace_id=asset.workspace_id,
+        bound_by=actor.user_id,
+    )
+    versions = {
+        version.id: version.version_label
+        for version in await assets.list_versions(asset.id, asset.workspace_id)
+    }
+    return ok(
+        ChannelDTO(
+            channel=binding.channel.value,
+            version_id=binding.version_id,
+            version=versions.get(binding.version_id or ""),
+            bound_at=binding.bound_at,
+            bound_by=binding.bound_by,
+        ).model_dump()
+    )
+
+
+@router.post("/agents/{agent_id}/deployment-keys")
+async def mint_deployment_key(
+    payload: DeploymentKeyRequest,
+    asset: Annotated[Asset, Depends(require_on_agent(Permission.ASSET_CREDENTIAL_CREATE))],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    """签发限定通道的 `evl_` 部署密钥。明文只在本响应里出现一次。"""
+    issued = await assets.mint_credential(
+        workspace_id=asset.workspace_id,
+        kind=CredentialKind.DEPLOY,
+        asset_id=asset.id,
+        channel=Channel(payload.channel),
+        name=payload.name,
+        expires_at=payload.expires_at,
+    )
+    dto = DeploymentKeyDTO(
+        id=issued.credential.id,
+        key=issued.secret,
+        prefix=issued.credential.prefix,
+        last_four=issued.credential.last_four,
+        agent_id=asset.id,
+        channel=payload.channel,
+        invoke_url=INVOKE_PATH.format(agent_id=asset.id),
+        name=issued.credential.name,
+        expires_at=issued.credential.expires_at,
+        created_at=issued.credential.created_at,
+    )
+    return ok(dto.model_dump())
 
 
 @router.post("/agents/{agent_id}/sdk-keys")

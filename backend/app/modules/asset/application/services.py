@@ -109,6 +109,25 @@ class AssetService:
             return None
         return await self.get_version_ref(version_id, workspace_id)
 
+    async def get_credential_context(
+        self, credential_id: str, workspace_id: str
+    ) -> CredentialContext | None:
+        """按 ID 取凭证上下文。**已撤销/过期的返回 None**——引用有效不等于钥匙有效。"""
+        now = self._clock.now()
+        async with UnitOfWork(self._db) as uow:
+            credential = await CredentialRepository(uow.session).get(credential_id, workspace_id)
+        if credential is None or not credential.is_usable(now):
+            return None
+        return CredentialContext(
+            credential_id=credential.id,
+            workspace_id=credential.workspace_id,
+            asset_id=credential.asset_id,
+            tenant_id=credential.tenant_id,
+            kind=credential.kind,
+            name=credential.name,
+            channel=credential.channel,
+        )
+
     async def get_asset(self, asset_id: str, workspace_id: str) -> AssetRef | None:
         """实现 `contracts.asset.AssetQueryPort`：只返回投影，不抛错。"""
         async with UnitOfWork(self._db) as uow:
@@ -122,6 +141,7 @@ class AssetService:
             name=asset.name,
             owner_id=asset.owner_id,
             lifecycle=asset.lifecycle,
+            description=asset.description,
         )
 
     async def list_versions(self, asset_id: str, workspace_id: str) -> Sequence[AssetVersion]:
@@ -140,6 +160,30 @@ class AssetService:
             )
             for channel in Channel
         }
+
+    async def bind_channel(
+        self,
+        *,
+        asset_id: str,
+        channel: Channel,
+        version_id: str,
+        workspace_id: str,
+        bound_by: str,
+    ) -> ChannelBinding:
+        """把某个版本挂到通道上。回退就是改这个指针，版本本身不删。
+
+        **只校验版本属于该 Agent**——晋级顺序与门禁由 delivery 负责；
+        在它落地前，调用方（控制台 / operator 供给接口）自己保证顺序。
+        """
+        await self.get_agent(asset_id, workspace_id)
+        async with UnitOfWork(self._db) as uow:
+            version = await AssetVersionRepository(uow.session).get(version_id, workspace_id)
+            if version is None or version.asset_id != asset_id:
+                raise NotFound("版本", version_id)
+            binding = ChannelBinding(asset_id, channel, version_id, self._clock.now(), bound_by)
+            await ChannelBindingRepository(uow.session).upsert(binding, workspace_id)
+            await uow.commit()
+        return binding
 
     async def list_credentials(self, workspace_id: str) -> Sequence[Credential]:
         async with UnitOfWork(self._db) as uow:
@@ -214,7 +258,7 @@ class AssetService:
             versions.add(version)
             await uow.session.flush()
 
-            ChannelBindingRepository(uow.session).upsert(
+            await ChannelBindingRepository(uow.session).upsert(
                 ChannelBinding(asset.id, Channel.TEST, version.id, now, owner_id),
                 workspace_id,
             )
@@ -355,6 +399,7 @@ class AssetService:
             tenant_id=credential.tenant_id,
             kind=credential.kind,
             name=credential.name,
+            channel=credential.channel,
         )
 
 

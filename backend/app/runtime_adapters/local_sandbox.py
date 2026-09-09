@@ -15,8 +15,8 @@ import time
 from typing import Any, Callable, Mapping
 
 from ..modules.execution.application.ports import (
+    InvocationContext,
     InvokeResult,
-    RunContext,
     RuntimeHandle,
     RuntimeSpec,
 )
@@ -26,6 +26,23 @@ logger = logging.getLogger(__name__)
 
 class EntrypointError(RuntimeError):
     """entrypoint 无法解析或调用失败。"""
+
+
+def _public_arguments(
+    target: Callable[..., Any], payload: Mapping[str, Any]
+) -> dict[str, Any]:
+    """只保留被测函数真正接受的参数（`__` 开头的内部键一律丢弃）。"""
+    public = {key: value for key, value in payload.items() if not key.startswith("__")}
+    try:
+        signature = inspect.signature(target)
+    except (TypeError, ValueError):  # 内建/无法内省的 callable：原样透传
+        return public
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        return public
+    return {key: value for key, value in public.items() if key in signature.parameters}
 
 
 def _resolve(entrypoint: str) -> Callable[..., Any]:
@@ -45,7 +62,7 @@ def _resolve(entrypoint: str) -> Callable[..., Any]:
 class LocalSandboxRuntime:
     """满足 `execution.application.ports.RuntimePort`。"""
 
-    async def provision(self, spec: RuntimeSpec, ctx: RunContext) -> RuntimeHandle:
+    async def provision(self, spec: RuntimeSpec, ctx: InvocationContext) -> RuntimeHandle:
         if not spec.entrypoint:
             raise EntrypointError(
                 f"版本 {spec.asset_version_id} 没有 entrypoint，本地沙箱无法启动"
@@ -57,7 +74,7 @@ class LocalSandboxRuntime:
         )
 
     async def invoke(
-        self, handle: RuntimeHandle, payload: Mapping[str, Any], ctx: RunContext
+        self, handle: RuntimeHandle, payload: Mapping[str, Any], ctx: InvocationContext
     ) -> InvokeResult:
         entrypoint = payload.get("__entrypoint__")
         if not entrypoint:
@@ -65,7 +82,9 @@ class LocalSandboxRuntime:
         target = _resolve(str(entrypoint))
 
         # **只传公开输入**：payload 由 execution 构造，不含 expected_output。
-        arguments = {key: value for key, value in payload.items() if not key.startswith("__")}
+        # 按签名过滤：对话调用会带上 `messages`，而多数被测函数只接受 `input`，
+        # 全量透传会直接 TypeError。带 **kwargs 的函数仍然拿到全部键。
+        arguments = _public_arguments(target, payload)
         started = time.perf_counter()
         try:
             if inspect.iscoroutinefunction(target):

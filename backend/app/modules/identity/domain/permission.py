@@ -71,6 +71,9 @@ _ADMIN = _DEVELOPER | _EVALUATOR | _R(
         P.ASSET_ARCHIVE,
         P.SHADOW_CONFIGURE,
         P.TRACE_READ_RAW,
+        # 展示平台的运营侧供给：建 portal 账号、建项目、拉成员、挂 Agent、绑通道。
+        # 展示平台自己的用户拿不到这个权限点——他们不走这套角色矩阵。
+        P.PORTAL_PROVISION,
     }
 )
 
@@ -124,6 +127,7 @@ MACHINE_FORBIDDEN: frozenset[P] = _R(
         P.WORKSPACE_SETTINGS_WRITE,
         P.TENANT_EXPORT,
         P.TENANT_PURGE,
+        P.PORTAL_PROVISION,
     }
 )
 

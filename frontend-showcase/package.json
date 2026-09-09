@@ -1,0 +1,36 @@
+{
+  "name": "eval-loom-showcase",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Eval Loom 展示平台：外部用户按项目浏览已上线 Agent，切换 TEST/LIVESH/LIVE 三通道并直接对话",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tsc": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.3.2",
+    "@ant-design/x": "^2.9.0",
+    "@ant-design/x-markdown": "^2.9.0",
+    "@ant-design/x-sdk": "^2.9.0",
+    "antd": "^6.6.0",
+    "antd-style": "^4.1.0",
+    "axios": "^1.7.9",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

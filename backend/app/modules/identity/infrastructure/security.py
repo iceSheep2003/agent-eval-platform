@@ -1,42 +1,22 @@
-"""密码哈希与会话令牌。
+"""会话令牌。
 
-密码用 argon2id（内存硬 KDF）。令牌的生成/哈希/比较复用 `shared.secrets`，
-避免会话与机器凭证各写一套。
+密码哈希已经上移到 `shared.passwords`——portal 也要用同一套 argon2id 参数。
+本模块只保留「会话」这一层，并对外转出共享工具，避免会话与机器凭证各写一套。
 """
 
 from __future__ import annotations
 
-from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerifyMismatchError
-
+from ....shared.passwords import (  # noqa: F401  (对外转出，模块内直接复用)
+    hash_password,
+    needs_rehash,
+    verify_password,
+)
 from ....shared.secrets import (  # noqa: F401  (对外转出，模块内直接复用)
     constant_time_equals,
     hash_secret as hash_token,
     new_csrf_token,
     new_secret,
 )
-
-_hasher = PasswordHasher()
-
-
-def hash_password(raw: str) -> str:
-    return _hasher.hash(raw)
-
-
-def verify_password(stored_hash: str | None, raw: str) -> bool:
-    if not stored_hash:
-        return False
-    try:
-        return _hasher.verify(stored_hash, raw)
-    except (VerifyMismatchError, InvalidHashError):
-        return False
-
-
-def needs_rehash(stored_hash: str) -> bool:
-    try:
-        return _hasher.check_needs_rehash(stored_hash)
-    except InvalidHashError:
-        return True
 
 
 def new_session_token() -> str:

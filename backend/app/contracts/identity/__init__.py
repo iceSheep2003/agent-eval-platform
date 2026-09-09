@@ -76,6 +76,9 @@ class Permission(StrEnum):
     VERSION_ROLLBACK = "version:rollback"
     SHADOW_CONFIGURE = "shadow:configure"
 
+    # portal（展示平台：运营侧供给项目/成员/挂载，展示平台自身只读+对话）
+    PORTAL_PROVISION = "portal:provision"
+
     # tenant
     TENANT_EXPORT = "tenant:export"
     TENANT_PURGE = "tenant:purge"
