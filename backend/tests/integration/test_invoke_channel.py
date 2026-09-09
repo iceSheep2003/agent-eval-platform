@@ -199,7 +199,7 @@ async def _scenario(tmp_path) -> None:
             crossed = await client.post(
                 f"/v1/agents/{agent.id}/invoke",
                 headers={"Authorization": f"Bearer {key.secret}"},
-                json={"input": "hi", "channel": "liversh"},
+                json={"input": "hi", "channel": "livesh"},
             )
             assert crossed.status_code == 403
             assert crossed.json()["errorCode"] == Errors.CREDENTIAL_SCOPE_VIOLATION.code

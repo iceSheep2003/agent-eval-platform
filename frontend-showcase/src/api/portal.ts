@@ -1,7 +1,7 @@
 import { http, requestList } from './client';
 
-/** 后端 `Channel` 枚举的线值。注意影子通道是 `liversh`，不是 `liveshadow`。 */
-export type ChannelValue = 'test' | 'liversh' | 'live';
+/** 后端 `Channel` 枚举的线值。注意影子通道是 `livesh`，不是 `liveshadow`。 */
+export type ChannelValue = 'test' | 'livesh' | 'live';
 
 export interface PortalUser {
   id: string;

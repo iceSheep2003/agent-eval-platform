@@ -162,11 +162,11 @@ async def _scenario(tmp_path) -> None:
             )
             shadow_key = await client.post(
                 f"/api/agents/{agent.id}/deployment-keys",
-                json={"channel": "liversh"},
+                json={"channel": "livesh"},
             )
             shadow_credential_id = shadow_key.json()["data"]["id"]
             await client.post(
-                f"/api/portal-admin/agents/{portal_agent_id}/channels/liversh/bind",
+                f"/api/portal-admin/agents/{portal_agent_id}/channels/livesh/bind",
                 json={"deployment_credential_id": shadow_credential_id},
             )
 
@@ -194,10 +194,10 @@ async def _scenario(tmp_path) -> None:
             items = agents.json()["data"]["items"]
             assert len(items) == 1
             channels = {item["channel"]: item for item in items[0]["channels"]}
-            assert set(channels) == {"test", "liversh", "live"}
+            assert set(channels) == {"test", "livesh", "live"}
             assert channels["live"]["bound"] is True
             assert channels["live"]["version_label"] == version.version_label
-            assert channels["liversh"]["notice"] == "影子预览 · 未返回真实用户"
+            assert channels["livesh"]["notice"] == "影子预览 · 未返回真实用户"
             assert channels["test"]["notice"] is None
 
             # -- 对话：打的是通道绑定的版本 --------------------------------
@@ -213,7 +213,7 @@ async def _scenario(tmp_path) -> None:
 
             shadow_chat = await client.post(
                 f"/api/portal/projects/{project_id}/agents/{portal_agent_id}"
-                f"/channels/liversh/chat",
+                f"/channels/livesh/chat",
                 json={"message": "你好"},
             )
             assert shadow_chat.json()["data"]["choices"][0]["message"]["content"] == (
@@ -225,7 +225,7 @@ async def _scenario(tmp_path) -> None:
             lines = await _sse_lines(
                 client,
                 f"/api/portal/projects/{project_id}/agents/{portal_agent_id}"
-                f"/channels/liversh/chat",
+                f"/channels/livesh/chat",
                 {"message": "你好", "stream": True},
             )
             data_lines = [line for line in lines if line.startswith("data: ")]

@@ -14,7 +14,7 @@ class InvokeRequest(BaseModel):
     """`POST /v1/agents/{id}/invoke`。`channel` 决定打哪个版本，不给版本号。"""
 
     input: str = Field(min_length=1)
-    channel: Literal["test", "liversh", "live"] = "live"
+    channel: Literal["test", "livesh", "live"] = "live"
     messages: list[dict[str, Any]] = Field(default_factory=list)
     timeout_seconds: float = Field(default=60.0, gt=0, le=600)
 

@@ -38,7 +38,7 @@ class BindChannelRequest(BaseModel):
 class DeploymentKeyRequest(BaseModel):
     """`POST /api/agents/{id}/deployment-keys`：签发一把**限定通道**的 `evl_` 密钥。"""
 
-    channel: Literal["test", "liversh", "live"]
+    channel: Literal["test", "livesh", "live"]
     name: str = Field(default="default", max_length=128)
     expires_at: datetime | None = None
 
