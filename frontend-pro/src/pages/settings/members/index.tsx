@@ -8,7 +8,7 @@
  * 组织里没有账号的人，先加到组织才能加进项目。
  */
 
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { MailOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import {
   App,
@@ -24,15 +24,18 @@ import {
 } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 import { useWorkspace } from '@/hooks/useWorkspace';
-import type { Member, OrgRole, WorkspaceRole } from '@/services/eval/members';
+import type { Invitation, Member, OrgRole, WorkspaceRole } from '@/services/eval/members';
 import {
   addOrgMember,
   addWorkspaceMember,
+  getInvitations,
   getOrgMembers,
   getOrganizations,
   getWorkspaceMembers,
+  inviteToOrganization,
   removeOrgMember,
   removeWorkspaceMember,
+  revokeInvitation,
   updateOrgMemberRole,
   updateWorkspaceMemberRole,
 } from '@/services/eval/members';
@@ -68,8 +71,9 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(false);
   const [organizationId, setOrganizationId] = useState<string>();
   const [orgMembers, setOrgMembers] = useState<Member[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [workspaceMembers, setWorkspaceMembers] = useState<Member[]>([]);
-  const [adding, setAdding] = useState<'org' | 'workspace' | null>(null);
+  const [adding, setAdding] = useState<'org' | 'workspace' | 'invite' | null>(null);
 
   const refresh = useCallback(async () => {
     if (!workspace) return;
@@ -78,12 +82,14 @@ export default function MembersPage() {
       const organizations = await getOrganizations();
       const organization = organizations.items[0];
       setOrganizationId(organization?.id);
-      const [org, members] = await Promise.all([
+      const [org, members, invites] = await Promise.all([
         organization ? getOrgMembers(organization.id) : Promise.resolve({ items: [] }),
         getWorkspaceMembers(workspace.id),
+        organization ? getInvitations(organization.id) : Promise.resolve({ items: [] }),
       ]);
       setOrgMembers(org.items);
       setWorkspaceMembers(members.items);
+      setInvitations(invites.items.filter((item) => item.status === 'pending'));
     } catch {
       setOrgMembers([]);
       setWorkspaceMembers([]);
@@ -99,7 +105,17 @@ export default function MembersPage() {
   const submit = async () => {
     const values = await form.validateFields();
     try {
-      if (adding === 'org' && organizationId) {
+      if (adding === 'invite' && organizationId) {
+        const invitation = await inviteToOrganization(organizationId, {
+          email: values.identifier,
+          role: values.role,
+        });
+        message.success(
+          invitation.status === 'accepted'
+            ? '该账号已存在，已直接加入组织'
+            : '邀请已发出，对方首次登录时自动加入',
+        );
+      } else if (adding === 'org' && organizationId) {
         await addOrgMember(organizationId, {
           identifier: values.identifier,
           role: values.role,
@@ -192,17 +208,29 @@ export default function MembersPage() {
             <strong>组织成员</strong>
             <Tag>{orgMembers.length}</Tag>
           </Space>
-          <Button
-            type="primary"
-            size="small"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              form.resetFields();
-              setAdding('org');
-            }}
-          >
-            添加组织成员
-          </Button>
+          <Space>
+            <Button
+              size="small"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                form.resetFields();
+                setAdding('org');
+              }}
+            >
+              添加已有账号
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              icon={<MailOutlined />}
+              onClick={() => {
+                form.resetFields();
+                setAdding('invite');
+              }}
+            >
+              按邮箱邀请
+            </Button>
+          </Space>
         </header>
         <Table
           size="small"
@@ -227,6 +255,58 @@ export default function MembersPage() {
               await refresh();
             },
           )}
+        />
+      </section>
+
+      <section style={{ marginBottom: 24 }}>
+        <header style={{ marginBottom: 12 }}>
+          <Space>
+            <strong>待接受的邀请</strong>
+            <Tag>{invitations.length}</Tag>
+            <span style={{ color: '#64748b', fontSize: 12 }}>
+              账号不存在时留待处理，对方首次登录自动接受
+            </span>
+          </Space>
+        </header>
+        <Table
+          size="small"
+          rowKey="id"
+          loading={loading}
+          pagination={false}
+          dataSource={invitations}
+          locale={{ emptyText: '没有待接受的邀请' }}
+          columns={[
+            { title: '邮箱', dataIndex: 'email' },
+            {
+              title: '角色',
+              width: 120,
+              render: (_, item) => ORG_ROLE_LABEL[item.role] ?? item.role,
+            },
+            {
+              title: '过期时间',
+              width: 140,
+              render: (_, item) => item.expires_at.slice(0, 10),
+            },
+            {
+              title: '操作',
+              width: 100,
+              render: (_, item) => (
+                <Popconfirm
+                  title="撤销这条邀请？"
+                  onConfirm={async () => {
+                    if (!organizationId) return;
+                    await revokeInvitation(organizationId, item.id);
+                    message.success('已撤销');
+                    await refresh();
+                  }}
+                >
+                  <Button type="link" size="small" danger>
+                    撤销
+                  </Button>
+                </Popconfirm>
+              ),
+            },
+          ]}
         />
       </section>
 
@@ -286,7 +366,13 @@ export default function MembersPage() {
 
       <Modal
         open={adding !== null}
-        title={adding === 'org' ? '添加组织成员' : '添加项目成员'}
+        title={
+          adding === 'invite'
+            ? '按邮箱邀请加入组织'
+            : adding === 'org'
+              ? '添加已有账号'
+              : '添加项目成员'
+        }
         okText="添加"
         cancelText="取消"
         onCancel={() => setAdding(null)}
@@ -295,12 +381,16 @@ export default function MembersPage() {
       >
         <Form form={form} layout="vertical">
           <Form.Item
-            label="账号"
+            label={adding === 'invite' ? '邮箱' : '账号'}
             name="identifier"
             rules={[{ required: true, message: '请输入用户名或邮箱' }]}
-            extra="账号需已存在。组织成员才能加进项目。"
+            extra={
+              adding === 'invite'
+                ? '账号不存在也没关系，会留成待接受的邀请。'
+                : '账号需已存在。组织成员才能加进项目。'
+            }
           >
-            <Input placeholder="用户名或邮箱" />
+            <Input placeholder={adding === 'invite' ? 'name@company.com' : '用户名或邮箱'} />
           </Form.Item>
           <Form.Item
             label="角色"

@@ -95,6 +95,37 @@ export const removeWorkspaceMember = (workspaceId: string, userId: string) =>
     ...withWorkspace(workspaceId),
   });
 
+export type Invitation = {
+  id: string;
+  organization_id: string;
+  email: string;
+  role: OrgRole;
+  status: 'pending' | 'accepted' | 'revoked';
+  invited_by: string;
+  created_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+};
+
+export const getInvitations = (organizationId: string) =>
+  call<{ items: Invitation[] }>(`/api/organizations/${organizationId}/invitations`);
+
+/** 按邮箱邀请。账号已存在立即加入；否则等对方首次登录时自动接受。 */
+export const inviteToOrganization = (
+  organizationId: string,
+  payload: { email: string; role: OrgRole },
+) =>
+  call<Invitation>(`/api/organizations/${organizationId}/invitations`, {
+    method: 'POST',
+    data: payload,
+  });
+
+export const revokeInvitation = (organizationId: string, invitationId: string) =>
+  call<{ invitation_id: string }>(
+    `/api/organizations/${organizationId}/invitations/${invitationId}`,
+    { method: 'DELETE' },
+  );
+
 export const createWorkspace = (payload: { slug: string; name: string }) =>
   call<{ id: string; name: string }>('/api/workspaces', {
     method: 'POST',
