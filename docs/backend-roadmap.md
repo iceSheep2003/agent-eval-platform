@@ -9,12 +9,12 @@
 
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
-| **M0** | 骨架 + 认证 + 权限 + 队列基线 + Alembic | ✅ 完成（84 tests） |
+| **M0** | 骨架 + 认证 + 权限 + 队列基线 + Alembic | ✅ 完成（86 tests） |
 | **M1** | SDK 上报闭环（asset + observability + ingest） | ✅ 完成 |
 | **M2** | 数据集 + 评测策略 | ✅ 完成（模型见 [backend-dataset.md](backend-dataset.md)） |
 | **M3** | 评测执行闭环（Run/Trial/Worker/评分/门禁） | ✅ 完成（82 tests） |
-| **M4** | 证据回流 + 前端接真数据 | ✅ 完成（84 tests） |
-| **M5** | 发布控制（P1） | ⬜ 未开始 |
+| **M4** | 证据回流 + 前端接真数据 | ✅ 完成（86 tests） |
+| **M5** | 发布控制（P1） | ✅ 完成（86 tests） |
 
 **M1 拆分**：
 - **M1a** — `asset` 模块 + 凭证签发 + 默认租户 + 控制台接口 ✅ **完成**
@@ -69,7 +69,7 @@ ALEMBIC_MODULE=asset .venv/bin/python -m alembic -c backend/alembic.ini \
 | # | 事项 | 触发条件 |
 | --- | --- | --- |
 | 5 | `ObjectStorePort` + S3 适配器 | 迁 k8s 时（本地 FS 不共享） |
-| 6 | OIDC 登录（`AuthProviderPort`） | 自建 IdP 就绪后 |
+| 6 | OIDC 登录（`AuthProviderPort`）与**高风险操作的 re-auth ticket** | 自建 IdP 就绪后；当前 `confirm=true` 是占位 |
 | 7 | 租户管理 UI 与同步接口 | M4 |
 | 8 | 外部 MQ 派发器 | 队列深度成为实测瓶颈时 |
 

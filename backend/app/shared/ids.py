@@ -61,6 +61,7 @@ PREFIXES: dict[str, str] = {
     # delivery
     "promotion": "prm",
     "rollback": "rbk",
+    "shadow_route": "shr",
     # 横切
     "audit": "aud",
 }

@@ -13,7 +13,7 @@ from typing import Protocol, runtime_checkable
 
 from typing import Any, Mapping
 
-from ..common import AssetKind, Channel, CredentialKind, Id
+from ..common import AssetKind, Channel, CredentialKind, Id, VersionLifecycle
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,11 +78,40 @@ class AssetQueryPort(Protocol):
         self, asset_id: Id, channel: Channel, workspace_id: Id
     ) -> AssetVersionRef | None: ...
 
+    async def channel_map(
+        self, asset_id: Id, workspace_id: Id
+    ) -> Mapping[Channel, Id | None]:
+        """三通道 → 当前绑定的版本 ID。晋级/回退据此判断「版本现在在哪」。"""
+        ...
+
 
 __all__ = [
     "AssetQueryPort",
+    "ChannelWritePort",
     "AssetRef",
     "AssetVersionRef",
     "CredentialContext",
     "CredentialResolverPort",
 ]
+
+
+@runtime_checkable
+class ChannelWritePort(Protocol):
+    """由 asset 实现；delivery 晋级/回退时改通道指针与版本生命周期。
+
+    晋级 = 改指针 + 写审计行，**不删除任何版本与证据**（需求说明 §9.12）。
+    """
+
+    async def bind_channel(
+        self,
+        *,
+        asset_id: Id,
+        channel: Channel,
+        version_id: Id | None,
+        workspace_id: Id,
+        actor_id: Id,
+    ) -> None: ...
+
+    async def set_version_lifecycle(
+        self, version_id: Id, lifecycle: VersionLifecycle, workspace_id: Id
+    ) -> None: ...

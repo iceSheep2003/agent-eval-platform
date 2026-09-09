@@ -97,6 +97,21 @@ class RunRepository:
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_run(row) for row in rows]
 
+    async def list_for_version(
+        self, workspace_id: str, version_id: str, limit: int = 50
+    ) -> Sequence[Run]:
+        stmt = (
+            select(RunRow)
+            .where(
+                RunRow.workspace_id == workspace_id,
+                RunRow.subject_version_id == version_id,
+            )
+            .order_by(RunRow.created_at.desc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_run(row) for row in rows]
+
     def add(self, run: Run) -> None:
         self._session.add(
             RunRow(

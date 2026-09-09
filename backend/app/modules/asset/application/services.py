@@ -99,6 +99,10 @@ class AssetService:
             spec=dict(version.spec),
         )
 
+    async def channel_map(self, asset_id: str, workspace_id: str) -> Mapping[Channel, str | None]:
+        states = await self.channel_states(asset_id, workspace_id)
+        return {channel: state.version_id for channel, state in states.items()}
+
     async def version_of_channel(
         self, asset_id: str, channel: Channel, workspace_id: str
     ) -> AssetVersionRef | None:
@@ -108,6 +112,34 @@ class AssetService:
         if version_id is None:
             return None
         return await self.get_version_ref(version_id, workspace_id)
+
+    async def bind_channel(
+        self,
+        *,
+        asset_id: str,
+        channel: Channel,
+        version_id: str | None,
+        workspace_id: str,
+        actor_id: str,
+    ) -> None:
+        """改通道指针。**不删除任何版本与证据**——回退就是改这里。"""
+        if version_id is not None:
+            version = await self.get_version_ref(version_id, workspace_id)
+            if version is None or version.asset_id != asset_id:
+                raise NotFound("版本", version_id)
+        async with UnitOfWork(self._db) as uow:
+            await ChannelBindingRepository(uow.session).upsert(
+                ChannelBinding(asset_id, channel, version_id, self._clock.now(), actor_id),
+                workspace_id,
+            )
+            await uow.commit()
+
+    async def set_version_lifecycle(
+        self, version_id: str, lifecycle: VersionLifecycle, workspace_id: str
+    ) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await AssetVersionRepository(uow.session).set_lifecycle(version_id, lifecycle)
+            await uow.commit()
 
     async def get_asset(self, asset_id: str, workspace_id: str) -> AssetRef | None:
         """实现 `contracts.asset.AssetQueryPort`：只返回投影，不抛错。"""
@@ -214,7 +246,7 @@ class AssetService:
             versions.add(version)
             await uow.session.flush()
 
-            ChannelBindingRepository(uow.session).upsert(
+            await ChannelBindingRepository(uow.session).upsert(
                 ChannelBinding(asset.id, Channel.TEST, version.id, now, owner_id),
                 workspace_id,
             )
@@ -260,6 +292,15 @@ class AssetService:
                 created_at=self._clock.now(),
             )
             versions.add(version)
+            await uow.session.flush()
+            # 新冻结的版本就是 TEST 候选——TEST 通道始终指向当前候选，
+            # 否则「晋级」连起点都没有。
+            await ChannelBindingRepository(uow.session).upsert(
+                ChannelBinding(
+                    asset_id, Channel.TEST, version.id, self._clock.now(), created_by
+                ),
+                workspace_id,
+            )
             await uow.commit()
         return version
 

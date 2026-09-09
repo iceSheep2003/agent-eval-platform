@@ -28,6 +28,7 @@ from ....contracts.common import (
 from ....contracts.dataset import SampleReaderPort, SampleRef
 from ....contracts.execution import (
     ChannelInvocation,
+    RunRef,
     InvokeEvent,
     InvokeResult,
     TrialRef,
@@ -270,6 +271,49 @@ class RunService:
         if trial is None:
             raise NotFound("Trial", trial_id)
         return trial
+
+    async def get_run_ref(self, run_id: Id, workspace_id: Id) -> RunRef | None:
+        """实现 `contracts.execution.RunQueryPort`。"""
+        async with UnitOfWork(self._db) as uow:
+            run = await RunRepository(uow.session).get(run_id, workspace_id)
+            if run is None:
+                return None
+            result = await RunResultRepository(uow.session).get(run_id)
+        return self._to_run_ref(run, result)
+
+    async def find_gate_run(
+        self, version_id: Id, stage: EvaluationStage, workspace_id: Id
+    ) -> RunRef | None:
+        """该版本最近一次「该阶段 + 已完成 + 带门禁判定」的 Run。"""
+        async with UnitOfWork(self._db) as uow:
+            runs = await RunRepository(uow.session).list_for_version(workspace_id, version_id)
+            for run in runs:
+                if run.status is not RunStatus.COMPLETED:
+                    continue
+                snapshot = snapshot_from_dict(run.template_snapshot)
+                if snapshot.stage is not stage:
+                    continue
+                result = await RunResultRepository(uow.session).get(run.id)
+                if result is None or result.gate_decision is None:
+                    continue
+                return self._to_run_ref(run, result)
+        return None
+
+    @staticmethod
+    def _to_run_ref(run: Run, result: RunResult | None) -> RunRef:
+        snapshot = snapshot_from_dict(run.template_snapshot)
+        return RunRef(
+            id=run.id,
+            workspace_id=run.workspace_id,
+            name=run.name,
+            subject_asset_id=run.subject_asset_id,
+            subject_version_id=run.subject_version_id,
+            dataset_version_id=run.dataset_version_id,
+            stage=snapshot.stage,
+            status=run.status,
+            gate_decision=dict(result.gate_decision) if result and result.gate_decision else None,
+            total_trials=run.total_trials,
+        )
 
     async def get_trial_ref(self, trial_id: Id, workspace_id: Id) -> TrialRef | None:
         """实现 `contracts.execution.TrialQueryPort`：给回流提供只读投影。"""

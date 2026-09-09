@@ -22,6 +22,7 @@ from .container import Container
 from .contracts import CONTRACT_VERSION
 from .modules.asset.api.router import router as asset_router
 from .modules.dataset.api.router import router as dataset_router
+from .modules.delivery.api.router import router as delivery_router
 from .modules.evaluation.api.router import router as evaluation_router
 from .modules.execution.api.router import router as execution_router
 from .modules.identity.api.router import auth_router, workspace_router
@@ -38,6 +39,7 @@ CONSOLE_ROUTERS = (
     evaluation_router,
     execution_router,
     trace_router,
+    delivery_router,
     overview_router,
     regression_router,
 )

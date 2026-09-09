@@ -12,7 +12,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol, runtime_checkable
 
-from ..common import Channel, ExecutionStatus, Id, JsonValue, Usage, Verdict
+from ..common import (
+    Channel,
+    EvaluationStage,
+    ExecutionStatus,
+    Id,
+    JsonValue,
+    RunStatus,
+    Usage,
+    Verdict,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,9 +107,44 @@ class InvokePort(Protocol):
 
 __all__ = [
     "ChannelInvocation",
+    "RunQueryPort",
+    "RunRef",
     "InvokeEvent",
     "InvokePort",
     "InvokeResult",
     "TrialQueryPort",
     "TrialRef",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class RunRef:
+    """Run 的只读投影。`gate_decision` 是晋级用例的**硬依据**。"""
+
+    id: Id
+    workspace_id: Id
+    name: str
+    subject_asset_id: Id
+    subject_version_id: Id
+    dataset_version_id: Id
+    stage: EvaluationStage
+    status: RunStatus
+    gate_decision: Mapping[str, Any] | None = None
+    total_trials: int = 0
+
+    @property
+    def gate_passed(self) -> bool:
+        return bool(self.gate_decision and self.gate_decision.get("passed"))
+
+
+@runtime_checkable
+class RunQueryPort(Protocol):
+    """由 execution 实现；delivery 晋级时取门禁判定。"""
+
+    async def get_run_ref(self, run_id: Id, workspace_id: Id) -> RunRef | None: ...
+
+    async def find_gate_run(
+        self, version_id: Id, stage: EvaluationStage, workspace_id: Id
+    ) -> RunRef | None:
+        """找该版本最近一次该阶段且已完成、带门禁判定的 Run。"""
+        ...
