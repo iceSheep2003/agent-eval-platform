@@ -106,7 +106,7 @@ deepeval test run examples/test_support_agent_deepeval.py
 
 ## 前后端统一工作区
 
-前端原型已合并到 `frontend/`，Python backend 保留在根目录：
+控制台在 `frontend-pro/`，Python backend 在 `backend/`：
 
 ```text
 agent评测开发/
@@ -114,16 +114,15 @@ agent评测开发/
 ├── src/agent_eval/       # Agent 侧观测与评测 SDK
 ├── tests/                # SDK 兼容测试
 ├── examples/             # DeepEval 埋点 Agent
-├── docs/                 # 平台架构
+├── docs/                 # 平台架构与设计（legacy-frontend/ 是已废弃的旧原型文档）
 ├── deploy/local-k8s/     # Kubernetes 本地运行说明
-└── frontend/             # React/Vite 控制台
+└── frontend-pro/         # React / Ant Design Pro 控制台（唯一前端）
 ```
 
 启动前端：
 
 ```bash
-cd frontend
+cd frontend-pro
 npm install
-npm run dev:api  # 单独终端
-npm run dev
+npm start
 ```
