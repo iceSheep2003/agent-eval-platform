@@ -14,12 +14,14 @@ import pytest
 
 from backend.app.container import Container
 from backend.app.contracts.common import (
+    Channel,
     DatasetPurpose,
     EvaluationStage,
     ExecutionStatus,
     RunStatus,
     Verdict,
 )
+from backend.app.contracts.execution import ChannelInvocation
 from backend.app.seed import seed
 from backend.app.settings import Settings
 from backend.app.shared.clock import FixedClock
@@ -86,6 +88,34 @@ async def _scenario(tmp_path) -> None:
                 "entrypoint": ENTRYPOINT,
             },
         )
+
+        # portal 路径：按通道调用当前绑定的版本
+        invoked = await container.invoke.invoke_channel(
+            ChannelInvocation(
+                workspace_id=workspace_id,
+                asset_id=agent.id,
+                channel=Channel.TEST,  # 注册时自动绑定 TEST
+                input="ping",
+            )
+        )
+        assert invoked.error is None
+        assert invoked.output == "ping"
+        assert invoked.version_label == "0.1.0"
+
+        # 没绑定版本的通道 → 明确报错，而不是静默打别的版本
+        from backend.app.contracts.errors import DomainError as _Err
+
+        with pytest.raises(_Err):
+            await container.invoke.invoke_channel(
+                ChannelInvocation(
+                    workspace_id=workspace_id,
+                    asset_id=agent.id,
+                    channel=Channel.LIVE,
+                    input="ping",
+                )
+            )
+
+        CALLS.clear()  # 上面 portal 的调用也走了同一个函数，先清掉
 
         # 数据集：2 条样本，一条会通过、一条不会
         dataset = await container.datasets.create_dataset(
@@ -172,6 +202,49 @@ async def _scenario(tmp_path) -> None:
         # 重复投递不产生重复 Trial（幂等）
         await _drain(container)
         assert len(await container.runs.list_trials(run.id, workspace_id)) == 2
+
+        # 回流：把失败的那条沉淀为回归样本
+        regression = await container.datasets.create_dataset(
+            workspace_id=workspace_id,
+            owner_id=owner,
+            name="回归集",
+            purpose=DatasetPurpose.REGRESSION,
+        )
+        failed = next(item for item in trials if item.verdict is Verdict.FAIL)
+        trial_ref = await container.runs.get_trial_ref(failed.id, workspace_id)
+        assert trial_ref is not None and trial_ref.verdict is Verdict.FAIL
+
+        item = await container.datasets.append_regression_sample(
+            dataset_id=regression.id,
+            workspace_id=workspace_id,
+            actor_id=owner,
+            trial=trial_ref,
+            reason="生产失败复现",
+        )
+        # 没有标准答案 → 必须人工复核，不能直接进固化版本
+        assert item.validation.value == "needs_review"
+        assert item.task.instruction == "world"
+        assert item.private is None
+        assert item.raw["trial_id"] == failed.id
+
+        # 去重：同一条失败反复沉淀只留一条
+        again = await container.datasets.append_regression_sample(
+            dataset_id=regression.id,
+            workspace_id=workspace_id,
+            actor_id=owner,
+            trial=trial_ref,
+        )
+        assert again.id == item.id
+        items, total = await container.datasets.list_items(
+            item.dataset_version_id, workspace_id
+        )
+        assert total == 1
+
+        # 有待复核样本时不能固化——正是这条约束挡住了「未确认的样本进回归集」
+        from backend.app.contracts.errors import DomainError as _DomainError
+
+        with pytest.raises(_DomainError):
+            await container.datasets.finalize_version(item.dataset_version_id, workspace_id)
     finally:
         await container.shutdown()
 

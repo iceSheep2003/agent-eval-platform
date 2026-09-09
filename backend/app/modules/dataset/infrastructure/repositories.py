@@ -204,6 +204,19 @@ class DatasetVersionRepository:
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_version(row) for row in rows]
 
+    async def find_draft(self, dataset_id: str) -> DatasetVersion | None:
+        stmt = (
+            select(DatasetVersionRow)
+            .where(
+                DatasetVersionRow.dataset_id == dataset_id,
+                DatasetVersionRow.lifecycle == "draft",
+            )
+            .order_by(DatasetVersionRow.created_at.desc())
+            .limit(1)
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _version(row) if row else None
+
     async def count_for_dataset(self, dataset_id: str) -> int:
         stmt = select(func.count()).select_from(DatasetVersionRow).where(
             DatasetVersionRow.dataset_id == dataset_id
@@ -269,6 +282,14 @@ class DatasetItemRepository:
         rows = (await self._session.execute(stmt)).scalars().all()
         total = int((await self._session.execute(count_stmt)).scalar_one())
         return [_item(row) for row in rows], total
+
+    async def find_by_digest(self, version_id: str, content_digest: str) -> DatasetItem | None:
+        stmt = select(DatasetItemRow).where(
+            DatasetItemRow.dataset_version_id == version_id,
+            DatasetItemRow.content_digest == content_digest,
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _item(row) if row else None
 
     async def count_by_validation(self, version_id: str) -> Mapping[str, int]:
         stmt = (

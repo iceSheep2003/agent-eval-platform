@@ -20,13 +20,17 @@ from ....contracts.common import (
     TaskShape,
 )
 from ....contracts.errors import DomainError, Errors, NotFound
+from ....contracts.execution import TrialRef
 from ....persistence import UnitOfWork
 from ....persistence.database import Database
 from ....shared.clock import Clock
 from ....shared.ids import new_id
 from ..domain.importing import PreflightResult, preflight, sanitized_raw
+from ..domain.models import item_digest
 from ..domain.models import (
     Dataset,
+    PrivateTaskContext,
+    TaskSpec,
     DatasetItem,
     DatasetSource,
     DatasetVersion,
@@ -190,6 +194,72 @@ class DatasetService:
             await uow.commit()
 
         return ImportOutcome(session=session, version=version)
+
+    async def append_regression_sample(
+        self,
+        *,
+        dataset_id: Id,
+        workspace_id: Id,
+        actor_id: Id,
+        trial: TrialRef,
+        reason: str | None = None,
+    ) -> DatasetItem:
+        """把一次失败 Trial 沉淀成**草稿样本**。
+
+        刻意留空 `private`：生产/失败样本天然没有标准答案，期望结果必须人工补
+        （docs/backend-dataset.md §6.2）。因此样本以 `needs_review` 落库，
+        复核通过前不会进入固化版本。
+        """
+        task = TaskSpec(instruction=trial.instruction)
+        private: PrivateTaskContext | None = None
+        digest = item_digest(task, private)
+
+        async with UnitOfWork(self._db) as uow:
+            versions = DatasetVersionRepository(uow.session)
+            version = await versions.find_draft(dataset_id)
+            if version is None:
+                version = DatasetVersion(
+                    id=new_id("dataset_version"),
+                    dataset_id=dataset_id,
+                    workspace_id=workspace_id,
+                    version_label=_next_label(await versions.count_for_dataset(dataset_id)),
+                    lifecycle="draft",
+                    item_count=0,
+                    content_digest="",
+                    created_by=actor_id,
+                    created_at=self._clock.now(),
+                )
+                versions.add(version)
+                await uow.session.flush()
+
+            items = DatasetItemRepository(uow.session)
+            existing = await items.find_by_digest(version.id, digest)
+            if existing is not None:
+                return existing  # 去重：同一条失败不重复沉淀
+
+            item = DatasetItem(
+                id=new_id("sample"),
+                dataset_version_id=version.id,
+                workspace_id=workspace_id,
+                tenant_id=trial.tenant_id,
+                index=await self._next_index(version.id),
+                raw={"source": "trial", "trial_id": trial.id, "reason": reason},
+                task=task,
+                private=private,
+                validation=ItemValidation.NEEDS_REVIEW,
+                content_digest=digest,
+                created_at=self._clock.now(),
+            )
+            items.add(item)
+            await uow.commit()
+        return item
+
+    async def _next_index(self, version_id: Id) -> int:
+        async with UnitOfWork(self._db) as uow:
+            _, total = await DatasetItemRepository(uow.session).list_page(
+                version_id, limit=1, offset=0
+            )
+        return total
 
     async def list_imports(self, dataset_id: Id, workspace_id: Id) -> Sequence[ImportSession]:
         await self.get_dataset(dataset_id, workspace_id)
