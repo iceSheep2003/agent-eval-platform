@@ -12,6 +12,14 @@ from typing import Any, Mapping, Sequence
 from ....contracts.asset import AssetQueryPort
 from ....contracts.common import Determinism, EvaluationStage, Id
 from ....contracts.dataset import DatasetQueryPort
+from ....contracts.evaluation import (
+    DimensionSpecRef,
+    EvaluatorSpecRef,
+    GateDecisionRef,
+    GateRuleRef,
+    GateRuleResultRef,
+    TemplateSnapshot,
+)
 from ....contracts.errors import DomainError, Errors, NotFound
 from ....persistence import UnitOfWork
 from ....persistence.database import Database
@@ -211,6 +219,112 @@ class EvaluationService:
         async with UnitOfWork(self._db) as uow:
             await TemplateRepository(uow.session).remove_binding(template_id, asset_id)
             await uow.commit()
+
+    # -- TemplateSnapshotPort（execution 消费）---------------------------------
+
+    async def snapshot(self, template_id: Id, workspace_id: Id) -> TemplateSnapshot | None:
+        """冻结策略。Run 创建后策略怎么改都不影响它（需求说明 §9.7）。"""
+        template = await self.get_template(template_id, workspace_id)
+        if not template.enabled:
+            raise DomainError(Errors.TEMPLATE_DISABLED, f"策略「{template.name}」已停用")
+        async with UnitOfWork(self._db) as uow:
+            dimensions = await CapabilityRepository(uow.session).get_dimensions(
+                template.dimension_ids
+            )
+        return TemplateSnapshot(
+            template_id=template.id,
+            template_name=template.name,
+            stage=template.stage,
+            dataset_version_id=template.dataset_version_id,
+            evaluators=tuple(
+                EvaluatorSpecRef(
+                    name=item.name, version=item.version, determinism=item.determinism
+                )
+                for item in template.evaluators
+            ),
+            dimensions=tuple(
+                DimensionSpecRef(
+                    id=item.id,
+                    name=item.name,
+                    weight=item.weight,
+                    threshold=item.threshold,
+                    evaluator_names=item.evaluator_names,
+                )
+                for item in dimensions
+            ),
+            gates=tuple(
+                GateRuleRef(
+                    name=item.name,
+                    metric_key=item.metric_key,
+                    threshold=item.threshold,
+                    unit=item.unit,
+                    comparison=item.comparison,
+                    scope=item.scope,
+                    action=item.action,
+                    required_determinism=item.required_determinism,
+                    min_samples=item.min_samples,
+                )
+                for item in template.gates
+            ),
+            snapshot_source="explicit",
+            frozen_at=self._clock.now(),
+        )
+
+    # -- GateEvaluatorPort（execution 消费）------------------------------------
+
+    def evaluate_gates(
+        self,
+        gates: Sequence[GateRuleRef],
+        metrics: Mapping[str, float],
+        *,
+        evaluator_determinism: Mapping[str, Determinism] | None = None,
+        sample_size: int | None = None,
+    ) -> GateDecisionRef:
+        """契约入口。内部仍是那个纯函数，只是不让 execution 直接 import。"""
+        rules = tuple(
+            GateRule(
+                name=item.name,
+                metric_key=item.metric_key,
+                threshold=item.threshold,
+                unit=item.unit,  # type: ignore[arg-type]
+                comparison=item.comparison,
+                scope=item.scope,
+                action=item.action,
+                required_determinism=item.required_determinism,
+                min_samples=item.min_samples,
+            )
+            for item in gates
+        )
+        decision = evaluate_gate(
+            rules,
+            metrics,
+            evaluator_determinism=evaluator_determinism,
+            sample_size=sample_size,
+            now=self._clock.now(),
+        )
+        return GateDecisionRef(
+            passed=decision.passed,
+            results=tuple(
+                GateRuleResultRef(
+                    rule=item.rule,
+                    metric_key=item.metric_key,
+                    actual=item.actual,
+                    threshold=item.threshold,
+                    unit=item.unit,
+                    comparison=item.comparison,
+                    passed=item.passed,
+                    action=item.action,
+                    scope=item.scope,
+                    tenant_id=item.tenant_id,
+                    sample_size=item.sample_size,
+                    skipped=item.skipped,
+                    reason=item.reason,
+                )
+                for item in decision.results
+            ),
+            blocked_rules=decision.blocked_rules,
+            blocked_reasons=decision.blocked_reasons,
+        )
 
     # -- 门禁 ----------------------------------------------------------------
 

@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
+
+from typing import Any, Mapping
 
 from ..common import AssetKind, CredentialKind, Id
 
@@ -49,16 +51,34 @@ class CredentialResolverPort(Protocol):
     async def resolve_credential(self, raw_key: str) -> CredentialContext | None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class AssetVersionRef:
+    """版本投影。`entrypoint` 是执行面启动被测对象所需的最小信息。"""
+
+    id: Id
+    asset_id: Id
+    workspace_id: Id
+    version_label: str
+    lifecycle: str
+    entrypoint: str | None
+    spec: Mapping[str, Any] = field(default_factory=dict)
+
+
 @runtime_checkable
 class AssetQueryPort(Protocol):
-    """由 asset 实现；evaluation 在绑定策略时校验资产存在。"""
+    """由 asset 实现；evaluation 校验资产存在，execution 取版本启动 Runtime。"""
 
     async def get_asset(self, asset_id: Id, workspace_id: Id) -> AssetRef | None: ...
+
+    async def get_version_ref(
+        self, version_id: Id, workspace_id: Id
+    ) -> AssetVersionRef | None: ...
 
 
 __all__ = [
     "AssetQueryPort",
     "AssetRef",
+    "AssetVersionRef",
     "CredentialContext",
     "CredentialResolverPort",
 ]

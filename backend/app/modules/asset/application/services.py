@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
-from ....contracts.asset import AssetRef, CredentialContext
+from ....contracts.asset import AssetRef, AssetVersionRef, CredentialContext
 from ....contracts.common import AssetKind, Channel, CredentialKind, VersionLifecycle
 from ....contracts.errors import DomainError, Errors, NotFound
 from ....contracts.identity import TenantProvisioningPort
@@ -81,6 +81,24 @@ class AssetService:
             raise NotFound("Agent", asset_id)
         return asset
 
+    async def get_version_ref(
+        self, version_id: str, workspace_id: str
+    ) -> AssetVersionRef | None:
+        """实现 `contracts.asset.AssetQueryPort`：给执行面提供 entrypoint。"""
+        async with UnitOfWork(self._db) as uow:
+            version = await AssetVersionRepository(uow.session).get(version_id, workspace_id)
+        if version is None:
+            return None
+        return AssetVersionRef(
+            id=version.id,
+            asset_id=version.asset_id,
+            workspace_id=version.workspace_id,
+            version_label=version.version_label,
+            lifecycle=version.lifecycle.value,
+            entrypoint=version.spec.get("entrypoint"),  # type: ignore[arg-type]
+            spec=dict(version.spec),
+        )
+
     async def get_asset(self, asset_id: str, workspace_id: str) -> AssetRef | None:
         """实现 `contracts.asset.AssetQueryPort`：只返回投影，不抛错。"""
         async with UnitOfWork(self._db) as uow:
@@ -128,11 +146,18 @@ class AssetService:
         description: str = "",
         connect_type: str = "sdk",
         environment: str | None = None,
+        source: Mapping[str, Any] | None = None,
     ) -> Asset:
-        """接入 Agent。名称在（工作区, 类型）内唯一，重复接入返回既有资产。"""
-        spec_body = {"kind": AssetKind.AGENT.value, "connect_type": connect_type}
+        """接入 Agent。名称在（工作区, 类型）内唯一，重复接入返回既有资产。
+
+        `source` 携带接入方式特有的字段（github 的 repository/ref、
+        package 的 artifact_id/entrypoint），由 `spec/agent.py` 校验。
+        """
+        spec_body: dict[str, Any] = {"kind": AssetKind.AGENT.value, "connect_type": connect_type}
         if environment:
             spec_body["environment"] = environment
+        if source:
+            spec_body.update(source)
         result = spec_registry.validator_for(AssetKind.AGENT).validate(spec_body)
         if not result.ok:
             raise DomainError(

@@ -9,11 +9,11 @@
 
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
-| **M0** | 骨架 + 认证 + 权限 + 队列基线 + Alembic | ✅ 完成（78 tests） |
+| **M0** | 骨架 + 认证 + 权限 + 队列基线 + Alembic | ✅ 完成（82 tests） |
 | **M1** | SDK 上报闭环（asset + observability + ingest） | ✅ 完成 |
 | **M2** | 数据集 + 评测策略 | ✅ 完成（模型见 [backend-dataset.md](backend-dataset.md)） |
-| **M3** | 评测执行闭环（Run/Trial/Worker） | ⬜ 下一步 |
-| **M4** | 证据回流 + 前端接真数据 | ⬜ 未开始 |
+| **M3** | 评测执行闭环（Run/Trial/Worker/评分/门禁） | ✅ 完成（82 tests） |
+| **M4** | 证据回流 + 前端接真数据 | ⬜ 下一步 |
 | **M5** | 发布控制（P1） | ⬜ 未开始 |
 
 **M1 拆分**：
@@ -96,6 +96,7 @@ ALEMBIC_MODULE=asset .venv/bin/python -m alembic -c backend/alembic.ini \
 | 路径前缀 | `/api/*` 兼容面 + `/api/v1/*` 别名；`/v1/*` 机器面 | 前端与 `register.py` 已在用 `/api/*` |
 | 队列 | 事务性 Outbox 先行，MQ 只作派发优化 | 业务写入与入队必须原子 |
 | 探针 | `/api/live`（liveness，不碰 DB）+ `/api/health`（readiness，查 DB） | DB 抖动不该重启 pod |
+| **Score 归属** | **execution**（表 `run_score`），不是 observability | Score 是 Trial 的产物，与 Run/Trial 同生命周期；拆开会造成写读两端来回穿模块边界 |
 
 ---
 

@@ -574,8 +574,8 @@ class Membership:
 | `asset` | `Asset`, `AssetVersion`, `ChannelBinding`, `Credential`, `Artifact` | P0(agent)/P2 | 资产台账、不可变版本、三通道指针 |
 | `dataset` | `Dataset`, `DatasetVersion`, `DatasetItem`, `ImportSession` | P0 | 样本集合、导入预检、复核、版本固化 |
 | `evaluation` | `Capability`, `ScoreDimension`, `Evaluator`, `EvaluationTemplate`, `GateRule` | P0 | 能力/维度/评估器分层，策略编排 |
-| `execution` | `Run`, `Trial`, `RunResult` | P0 | 一次实验的冻结、派发、推进、固化 |
-| `observability` | `Trace`, `Span`, `Score`, `Evidence`, `CostRecord` | P0 | 执行事实、评分证据、成本与延迟 |
+| `execution` | `Run`, `Trial`, `RunResult`, `Score` | P0 | 一次实验的冻结、派发、推进、评分与固化 |
+| `observability` | `Trace`, `Span`, `CostRecord` | P0 | 运行时事实、成本与延迟 |
 | `improvement` | `Proposal`, `ProposalReview`, `RegressionSample` | P0(样本)/P1 | 生产问题回流 |
 | `delivery` | `Promotion`, `ShadowRoute`, `Rollback` | P1 | 晋级、影子验证、发布、回退 |
 

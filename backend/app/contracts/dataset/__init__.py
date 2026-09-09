@@ -11,7 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from ..common import DatasetPurpose, EvaluationStage, Id, TaskShape
+from typing import Any, Mapping, Sequence
+
+from ..common import DatasetPurpose, EvaluationStage, Id, JsonValue, TaskShape
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,4 +42,37 @@ class DatasetQueryPort(Protocol):
     ) -> DatasetVersionRef | None: ...
 
 
-__all__ = ["DatasetQueryPort", "DatasetVersionRef"]
+__all__ = [
+    "DatasetQueryPort",
+    "DatasetVersionRef",
+    "SampleReaderPort",
+    "SampleRef",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class SampleRef:
+    """执行面读到的样本。**`private` 里的期望结果绝不进 Agent 输入。**"""
+
+    id: Id
+    dataset_version_id: Id
+    workspace_id: Id
+    tenant_id: Id | None
+    index: int
+    instruction: str
+    context: Mapping[str, JsonValue]
+    expected_output: JsonValue | None
+    protocol: str
+
+
+@runtime_checkable
+class SampleReaderPort(Protocol):
+    """由 dataset 实现；execution 展开 Trial 时按页读取。"""
+
+    async def count(self, version_id: Id) -> int: ...
+
+    async def read_page(
+        self, version_id: Id, *, limit: int = 200, offset: int = 0
+    ) -> Sequence[SampleRef]: ...
+
+    async def get_sample(self, sample_id: Id) -> SampleRef | None: ...

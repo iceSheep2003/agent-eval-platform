@@ -28,11 +28,24 @@ LEASE_REAP_INTERVAL_SECONDS = 30.0
 
 
 class CommandHandler(Protocol):
-    """命令处理器。实现方在 `modules/<name>/application/` 里。"""
+    """命令处理器。实现方在 `modules/<name>/application/` 里。
 
-    command_type: str
+    一个 handler 可以管多种命令（`command_types`），也可以只写单个 `command_type`。
+    """
+
+    command_types: tuple[str, ...]
 
     async def handle(self, command: Command, uow: UnitOfWork) -> None: ...
+
+
+def _command_types_of(handler: object) -> tuple[str, ...]:
+    multiple = getattr(handler, "command_types", None)
+    if multiple:
+        return tuple(multiple)
+    single = getattr(handler, "command_type", None)
+    if single:
+        return (str(single),)
+    raise TypeError(f"{type(handler).__name__} 既没有 command_types 也没有 command_type")
 
 
 class UnknownCommandType(RuntimeError):
@@ -49,7 +62,11 @@ class Worker:
         batch: int = 4,
     ) -> None:
         self._container = container
-        self._handlers = {handler.command_type: handler for handler in handlers}
+        self._handlers = {
+            command_type: handler
+            for handler in handlers
+            for command_type in _command_types_of(handler)
+        }
         self._worker_id = worker_id or f"worker-{os.getpid()}"
         self._batch = batch
         self._stopping = False
@@ -59,7 +76,8 @@ class Worker:
         return self._worker_id
 
     def register(self, handler: CommandHandler) -> None:
-        self._handlers[handler.command_type] = handler
+        for command_type in _command_types_of(handler):
+            self._handlers[command_type] = handler
 
     def request_stop(self) -> None:
         """优雅停机：停止领取新命令，在途的跑完。"""
@@ -115,7 +133,7 @@ async def main() -> None:
     container = Container.build()
     await container.startup()
 
-    worker = Worker(container)
+    worker = Worker(container, [container.execution_handlers])
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, worker.request_stop)

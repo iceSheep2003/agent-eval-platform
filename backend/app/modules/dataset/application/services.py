@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from ....contracts.dataset import DatasetVersionRef
+from ....contracts.dataset import DatasetVersionRef, SampleRef
 from ....contracts.common import (
     DatasetOrigin,
     DatasetPurpose,
@@ -289,6 +289,29 @@ class DatasetService:
             finalized=version.lifecycle == "finalized",
         )
 
+    # -- SampleReaderPort（execution 消费）--------------------------------------
+
+    async def count(self, version_id: Id) -> int:
+        async with UnitOfWork(self._db) as uow:
+            items, total = await DatasetItemRepository(uow.session).list_page(
+                version_id, limit=1, offset=0
+            )
+        return total
+
+    async def read_page(
+        self, version_id: Id, *, limit: int = 200, offset: int = 0
+    ) -> Sequence[SampleRef]:
+        async with UnitOfWork(self._db) as uow:
+            items, _ = await DatasetItemRepository(uow.session).list_page(
+                version_id, limit=limit, offset=offset
+            )
+        return [_sample_ref(item) for item in items]
+
+    async def get_sample(self, sample_id: Id) -> SampleRef | None:
+        async with UnitOfWork(self._db) as uow:
+            item = await DatasetItemRepository(uow.session).get_by_id(sample_id)
+        return _sample_ref(item) if item else None
+
     async def get_version(self, version_id: Id, workspace_id: Id) -> DatasetVersion:
         async with UnitOfWork(self._db) as uow:
             version = await DatasetVersionRepository(uow.session).get(version_id, workspace_id)
@@ -321,6 +344,20 @@ class DatasetService:
         if item is None:
             raise NotFound("样本", item_id)
         return item
+
+
+def _sample_ref(item: DatasetItem) -> SampleRef:
+    return SampleRef(
+        id=item.id,
+        dataset_version_id=item.dataset_version_id,
+        workspace_id=item.workspace_id,
+        tenant_id=item.tenant_id,
+        index=item.index,
+        instruction=item.task.instruction,
+        context=dict(item.task.context),
+        expected_output=item.private.expected_output if item.private else None,
+        protocol=item.task.protocol.value,
+    )
 
 
 def _next_label(existing: int) -> str:

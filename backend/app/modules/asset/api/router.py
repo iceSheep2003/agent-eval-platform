@@ -102,6 +102,7 @@ async def register_agent(
         description=payload.description,
         connect_type=payload.connect_type,
         environment=payload.environment,
+        source=payload.source,
     )
     return ok((await _agent_dto(assets, asset)).model_dump())
 

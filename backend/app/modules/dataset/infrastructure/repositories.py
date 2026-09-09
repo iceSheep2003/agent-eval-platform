@@ -248,6 +248,11 @@ class DatasetItemRepository:
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _item(row) if row else None
 
+    async def get_by_id(self, item_id: str) -> DatasetItem | None:
+        """按 ID 取样本，不校验工作区——调用方（execution）已在自己的上下文里。"""
+        row = await self._session.get(DatasetItemRow, item_id)
+        return _item(row) if row else None
+
     async def list_page(
         self, version_id: str, *, limit: int = 50, offset: int = 0
     ) -> tuple[Sequence[DatasetItem], int]:
