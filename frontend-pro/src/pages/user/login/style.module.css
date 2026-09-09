@@ -1,0 +1,19 @@
+/* biome-ignore-all lint/correctness/noUnknownPseudoClass: CSS Modules global selectors target Ant Design internals. */
+.page { min-height: 100vh; display: grid; grid-template-columns: minmax(420px, 1.15fr) minmax(420px, .85fr); background: #f7f9fc; }
+.story { position: relative; display: flex; min-height: 100vh; flex-direction: column; overflow: hidden; padding: 48px 64px; color: #172033; background: linear-gradient(145deg, #edf4ff 0%, #f8fbff 56%, #eefaf7 100%); }
+.story::after { position: absolute; right: -160px; bottom: -250px; width: 620px; height: 620px; content: ''; border: 1px solid rgba(79,124,255,.16); border-radius: 50%; box-shadow: 0 0 0 54px rgba(79,124,255,.04), 0 0 0 108px rgba(54,190,159,.035); }
+.brand { display: flex; align-items: center; gap: 12px; font-size: 14px; letter-spacing: .12em; }
+.mark { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid #b8cbff; border-radius: 10px; color: #315fd6; background: rgba(255,255,255,.72); font-size: 11px; }
+.storyBody { z-index: 1; width: min(620px, 90%); margin: auto 0; }
+.kicker { color: #315fd6; font-size: 11px; font-weight: 600; letter-spacing: .16em; }
+.story h1 { margin: 24px 0; font-size: clamp(44px, 5vw, 72px); line-height: 1.05; letter-spacing: -.055em; }
+.story p { max-width: 590px; margin: 0; color: #64748b; font-size: 16px; line-height: 1.9; }
+.signalGrid { z-index: 1; display: grid; grid-template-columns: repeat(3, 1fr); padding-top: 26px; border-top: 1px solid #dbe5f2; }
+.signalGrid div { display: flex; flex-direction: column; gap: 7px; }
+.signalGrid span { color: #8491a5; font-size: 11px; }
+.signalGrid strong { font-size: 15px; }
+.formPanel { display: grid; place-items: center; padding: 48px; border-left: 1px solid #e7ecf3; background: rgba(255,255,255,.92); }
+.formPanel :global(.ant-pro-form-login-container) { width: min(400px, 100%); padding: 0; }
+.alert { margin-bottom: 20px; }
+.demo { display: flex; align-items: center; gap: 8px; margin-top: 18px; padding: 12px; border: 1px solid #e5e9f0; border-radius: 8px; background: #f8fafc; }
+@media (max-width: 860px) { .page { grid-template-columns: 1fr; } .story { display: none; } .formPanel { min-height: 100vh; padding: 24px; } }

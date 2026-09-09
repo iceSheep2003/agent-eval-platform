@@ -1,0 +1,75 @@
+/* biome-ignore-all lint/correctness/noUnknownPseudoClass: CSS Modules global selectors target Ant Design internals. */
+.signalBar { display: flex; min-height: 66px; align-items: center; gap: 24px; padding: 0 20px; border: 1px solid #e7ebf0; border-radius: 12px; background: #fff; box-shadow: 0 5px 18px rgba(30, 64, 175, .035); }
+.signalBar > div { display: flex; align-items: center; gap: 9px; color: #64748b; font-size: 12px; }
+.signalBar strong { color: #172033; font-size: 19px; font-variant-numeric: tabular-nums; }
+.signalBar small { color: #94a3b8; font-size: 10px; font-weight: 500; }
+.signalBar > i { width: 1px; height: 28px; background: #edf0f4; }
+.signalBar > button { margin-left: auto; }
+.liveDot,.failDot { width: 7px; height: 7px; border-radius: 50%; background: #22a06b; box-shadow: 0 0 0 4px #e8f8f0; }
+.failDot { background: #dc5b62; box-shadow: 0 0 0 4px #fff0f1; }
+.workbench { margin-top: 16px; overflow: hidden; border: 1px solid #e4e8ee; border-radius: 12px; background: #fff; }
+.toolbar { display: flex; min-height: 62px; align-items: center; justify-content: space-between; gap: 20px; padding: 12px 16px; border-bottom: 1px solid #edf0f4; background: #fbfcfe; }
+.toolbar :global(.ant-input-affix-wrapper) { width: 300px; background: #fff; }
+.workspace { display: grid; grid-template-columns: minmax(640px, 1fr) 410px; min-height: 620px; }
+.listPane { min-width: 0; border-right: 1px solid #e8ecf1; }
+.listPane :global(.ant-table-thead > tr > th) { color: #718096; background: #f8fafc; font-size: 11px; }
+.listPane :global(.ant-table-tbody > tr > td) { padding-block: 14px; cursor: pointer; }
+.listPane :global(.ant-table-tbody > tr:hover > td) { background: #f5f8ff; }
+.listPane .selectedRow > td { background: #eef4ff; }
+.selectedRow > td:first-child { box-shadow: inset 3px 0 #4f7cff; }
+.secondary { font-size: 11px; }
+.inspector { min-width: 0; background: #fbfcfe; }
+.inspectorHeader { padding: 20px; border-bottom: 1px solid #e8ecf1; background: #fff; }
+.inspectorHeader > div { display: flex; align-items: center; justify-content: space-between; }
+.inspectorHeader code { color: #94a3b8; font-size: 10px; }
+.inspectorHeader h2 { margin: 16px 0 5px; color: #172033; font-size: 18px; }
+.inspectorHeader p { margin: 0; color: #64748b; font-size: 12px; }
+.actions { display: flex; min-height: 54px; align-items: center; gap: 8px; padding: 10px 20px; border-bottom: 1px solid #e8ecf1; background: #fff; }
+.actions > span { font-size: 11px; }
+.inspectorMetrics { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid #e8ecf1; background: #fff; }
+.inspectorMetrics > div { min-width: 0; padding: 14px 10px; border-right: 1px solid #edf0f4; }
+.inspectorMetrics > div:last-child { border: 0; }
+.inspectorMetrics span { display: block; color: #94a3b8; font-size: 9px; white-space: nowrap; }
+.inspectorMetrics strong { display: block; margin-top: 6px; color: #172033; font-size: 15px; font-variant-numeric: tabular-nums; }
+.inspectorMetrics small { color: #94a3b8; font-size: 8px; font-weight: 500; }
+.section { padding: 18px 20px; border-bottom: 1px solid #e8ecf1; }
+.section > header { display: flex; justify-content: space-between; margin-bottom: 13px; color: #344054; font-size: 12px; font-weight: 600; }
+.section > header small { color: #8492a6; font-weight: 500; }
+.section :global(.ant-steps) { margin-top: 18px; }
+.section :global(.ant-steps-item .ant-steps-item-title) { font-size: 10px; }
+.traceSection { border-bottom: 0; }
+.traceRail { max-height: 280px; overflow: auto; }
+.traceEvent { position: relative; display: grid; grid-template-columns: 18px 1fr; gap: 11px; padding-bottom: 17px; }
+.traceEvent:not(:last-child)::before { position: absolute; top: 12px; bottom: 0; left: 5px; width: 1px; content: ''; background: #dfe5ec; }
+.traceNode { z-index: 1; width: 11px; height: 11px; margin-top: 5px; border: 2px solid #fff; border-radius: 50%; background: #5b7cfa; box-shadow: 0 0 0 2px #dce5ff; }
+.traceNode.tool { background: #13a8a8; box-shadow: 0 0 0 2px #d7f5f5; }
+.traceNode.score { background: #7b61d1; box-shadow: 0 0 0 2px #ebe5ff; }
+.traceCopy { min-width: 0; }
+.traceCopy header { display: flex; align-items: center; gap: 7px; }
+.traceCopy header strong { min-width: 0; overflow: hidden; color: #253047; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.traceCopy header time { margin-left: auto; color: #9aa7b8; font-size: 9px; }
+.traceCopy p { max-height: 52px; margin: 5px 0 0; overflow: hidden; color: #69778c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; line-height: 1.55; white-space: pre-wrap; }
+@media (max-width: 1250px) { .workspace { grid-template-columns: 1fr; } .listPane { border-right: 0; } .inspector { border-top: 1px solid #e8ecf1; } }
+@media (max-width: 760px) { .signalBar { gap: 12px; overflow-x: auto; } .signalBar > i { display: none; } .toolbar { align-items: stretch; flex-direction: column; } .toolbar :global(.ant-input-affix-wrapper) { width: 100%; } }
+.drawerTitle { display: flex; flex-direction: column; gap: 3px; }
+.drawerTitle small { color: #7890b4; font-size: 8px; letter-spacing: .14em; }
+.drawerTitle strong { color: #172033; font-size: 15px; }
+.evidenceSummary { display: grid; grid-template-columns: repeat(4,1fr); margin-bottom: 26px; overflow: hidden; border: 1px solid #e3e9f1; border-radius: 12px; background: #f8faff; }
+.evidenceSummary > div { padding: 14px; border-right: 1px solid #e3e9f1; }
+.evidenceSummary > div:last-child { border: 0; }
+.evidenceSummary span,.evidenceSummary strong { display: block; }
+.evidenceSummary span { color: #8491a5; font-size: 9px; }
+.evidenceSummary strong { margin-top: 6px; color: #253047; font-size: 18px; }
+.evidenceSummary small { color: #94a3b8; font-size: 9px; }
+.scoreTitle { margin-top: 26px; }
+.scoreGrid { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; }
+.scoreGrid article { display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; padding: 13px; border: 1px solid #e6ebf2; border-radius: 10px; }
+.scoreGrid article span { color: #64748b; font-size: 10px; }
+.scoreGrid article strong { color: #253047; }
+.scoreGrid article :global(.ant-progress) { grid-column: 1 / -1; }
+.createHint { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 20px; padding: 14px; border: 1px solid #dae5f8; border-radius: 12px; color: #4f75dc; background: #f5f8ff; }
+.createHint > :global(.anticon) { margin-top: 3px; }
+.createHint > div { display: flex; flex-direction: column; gap: 4px; }
+.createHint strong { color: #2d4169; }
+.createHint span { color: #718096; font-size: 10px; }
+.formGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
