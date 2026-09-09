@@ -14,3 +14,4 @@ frontend-pro/.umi-production/
 frontend-pro/dist/
 .DS_Store
 .claude/
+.turbopack/
