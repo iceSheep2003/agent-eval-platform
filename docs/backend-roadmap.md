@@ -9,11 +9,11 @@
 
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
-| **M0** | 骨架 + 认证 + 权限 + 队列基线 + Alembic | ✅ 完成（82 tests） |
+| **M0** | 骨架 + 认证 + 权限 + 队列基线 + Alembic | ✅ 完成（84 tests） |
 | **M1** | SDK 上报闭环（asset + observability + ingest） | ✅ 完成 |
 | **M2** | 数据集 + 评测策略 | ✅ 完成（模型见 [backend-dataset.md](backend-dataset.md)） |
 | **M3** | 评测执行闭环（Run/Trial/Worker/评分/门禁） | ✅ 完成（82 tests） |
-| **M4** | 证据回流 + 前端接真数据 | ⬜ 下一步 |
+| **M4** | 证据回流 + 前端接真数据 | ✅ 完成（84 tests） |
 | **M5** | 发布控制（P1） | ⬜ 未开始 |
 
 **M1 拆分**：
@@ -42,7 +42,7 @@
 | 1 | ~~**Alembic 迁移**~~ | — | ✅ 已完成 |
 | 2 | `asyncpg` 依赖 | 切 PostgreSQL 时才需要，加进 `platform` extra | ⬜ |
 | 3 | ~~`register.py` 改为 `json()["data"]["id"]`~~ | — | ✅ M1a 已改 |
-| 4 | 前端 `requestErrorConfig.ts` 加 `dataField: 'data'` + `errorCode` 改 `string` | 否则页面拿不到真实数据，全部回退 mock | ⬜（M4 前） |
+| 4 | ~~前端 `dataField` + `errorCode` 改 `string`~~ | — | ✅ M4 已改（`dataField` 写在 `config/config.ts` 的插件配置里） |
 
 ### Alembic 的既定做法（已落地）
 
@@ -92,7 +92,7 @@ ALEMBIC_MODULE=asset .venv/bin/python -m alembic -c backend/alembic.ini \
 | 数据集 stages | **硬约束**：策略绑定时校验 `template.stage ∈ dataset.stages` | 防止宽松样本污染发布门禁 |
 | 数据集混合 | 一个版本**允许**混合 `task_shape` / `protocol`，比较时分组下钻 | 强求同质会逼出「一个数据集拆成好几个」的伪需求 |
 | 跨租户样本 | **可以直接共用** | 复用率高；代价是评测时注意样本来源 |
-| 前端 | **`frontend-pro` 是唯一前端**；旧 `frontend/` 已移除，其 6 份设计文档移至 `docs/legacy-frontend/` | 旧前端原型已废弃 |
+| 前端 | **`frontend-pro` 是唯一前端**，已并入本仓库（不再是嵌套 git 仓库）；旧 `frontend/` 已移除，其 6 份设计文档移至 `docs/legacy-frontend/` | 后端、SDK、控制台同一处，不再跨仓库同步 |
 | 路径前缀 | `/api/*` 兼容面 + `/api/v1/*` 别名；`/v1/*` 机器面 | 前端与 `register.py` 已在用 `/api/*` |
 | 队列 | 事务性 Outbox 先行，MQ 只作派发优化 | 业务写入与入队必须原子 |
 | 探针 | `/api/live`（liveness，不碰 DB）+ `/api/health`（readiness，查 DB） | DB 抖动不该重启 pod |
