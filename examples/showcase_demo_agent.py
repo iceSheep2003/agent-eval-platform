@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from typing import Any, AsyncIterator, Mapping, Sequence
 
 from .customer_support_agent.llm_client import ChatClient
 
@@ -30,15 +30,27 @@ _REFUND_ANSWER = "订单 {order_id} 符合退款条件，可以退款。"
 async def demo_support_agent(
     input: str,  # noqa: A002 - 参数名由平台调用协议决定
     messages: Sequence[Mapping[str, Any]] = (),
-) -> str:
-    """接真模型对话；拿不到模型就退到关键词回复。"""
+) -> AsyncIterator[str]:
+    """**异步生成器**：逐段吐模型的增量。
+
+    平台侧看到的是真流式（`RuntimePort.invoke_stream` 识别异步生成器）；
+    非流式调用（评测 Trial）会把各段拼回完整输出，两条路都不吃亏。
+
+    拿不到模型凭证、或模型一个字都没吐出来时，退到确定性回复——
+    兜底也走同一个生成器，调用方不必区分。
+    """
     history = _build_history(input, messages)
     client = ChatClient()
     if client.available:
-        reply = await client.chat(history, temperature=0.3, max_tokens=MAX_TOKENS)
-        if reply and reply.strip():
-            return reply.strip()
-    return _fallback(input)
+        emitted = False
+        async for piece in client.chat_stream(
+            history, temperature=0.3, max_tokens=MAX_TOKENS
+        ):
+            emitted = True
+            yield piece
+        if emitted:
+            return
+    yield _fallback(input)
 
 
 def _build_history(

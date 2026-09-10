@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Mapping, Sequence
+from typing import Any, AsyncIterator, Mapping, Sequence
 
 from ....contracts.asset import AssetQueryPort, AssetVersionRef
 from ....contracts.common import (
@@ -761,6 +761,71 @@ class InvokeService:
         self._clock = clock or SystemClock()
 
     async def invoke_channel(self, request: ChannelInvocation) -> InvokeResult:
+        version, ctx, payload = await self._prepare(request)
+        started_at = self._clock.now()
+        handle = await self._provision(version, request, ctx)
+        try:
+            result = await self._runtime.invoke(handle, payload, ctx)
+        finally:
+            await self._runtime.teardown(handle)
+
+        trace_id = await self._record(request, version, result, started_at)
+        return InvokeResult(
+            output=result.output,
+            error=result.error,
+            trace_id=trace_id,
+            duration_ms=result.duration_ms,
+            cost_usd=result.cost_usd,
+            version_label=version.version_label,
+        )
+
+    async def stream_channel(
+        self, request: ChannelInvocation
+    ) -> AsyncIterator[InvokeEvent]:
+        """流式调用：**边产出边下发**。
+
+        解析（通道→版本、entrypoint 校验）发生在产出第一个事件**之前**——
+        这类错误调用方还能当普通 HTTP 错误处理，不必塞进流里。
+        运行时失败则不同：那时流已经开始，只能作为 `error` 事件送出，
+        并且**把已经吐出去的字一起带上**，前端才不会凭空丢半句话。
+        """
+        version, ctx, payload = await self._prepare(request)
+        started_at = self._clock.now()
+        handle = await self._provision(version, request, ctx)
+        produced: list[str] = []
+        failure: str | None = None
+        try:
+            async for piece in self._runtime.invoke_stream(handle, payload, ctx):
+                produced.append(piece)
+                yield InvokeEvent(delta=piece)
+        except Exception as exc:  # noqa: BLE001 - 流已开始，只能作为事件送出
+            logger.warning("流式调用中途失败", exc_info=True)
+            failure = f"{type(exc).__name__}: {exc}"
+        finally:
+            await self._runtime.teardown(handle)
+
+        text = "".join(produced)
+        await self._record(
+            request,
+            version,
+            InvokeResult(
+                output=text or None,
+                error=failure,
+                version_label=version.version_label,
+            ),
+            started_at,
+        )
+
+        if failure is not None:
+            yield InvokeEvent(error=failure, finish_reason="error")
+            return
+        yield InvokeEvent(finish_reason="stop")
+
+    # -- 内部：解析与装配（非流式/流式共用，避免两条路径慢慢跑偏）----------
+
+    async def _prepare(
+        self, request: ChannelInvocation
+    ) -> tuple[AssetVersionRef, InvocationContext, dict[str, Any]]:
         version = await self._assets.version_of_channel(
             request.asset_id, request.channel, request.workspace_id
         )
@@ -775,7 +840,6 @@ class InvokeService:
                 Errors.RUN_SUBJECT_INCOMPLETE,
                 f"版本 {version.version_label} 没有 entrypoint（sdk 接入不可调用）",
             )
-
         ctx = InvocationContext(
             workspace_id=request.workspace_id,
             tenant_id=request.tenant_id,
@@ -788,9 +852,15 @@ class InvokeService:
         }
         if request.messages:
             payload["messages"] = [dict(item) for item in request.messages]
+        return version, ctx, payload
 
-        started_at = self._clock.now()
-        handle = await self._runtime.provision(
+    async def _provision(
+        self,
+        version: AssetVersionRef,
+        request: ChannelInvocation,
+        ctx: InvocationContext,
+    ) -> RuntimeHandle:
+        return await self._runtime.provision(
             RuntimeSpec(
                 asset_id=version.asset_id,
                 asset_version_id=version.id,
@@ -799,20 +869,6 @@ class InvokeService:
                 spec=version.spec,
             ),
             ctx,
-        )
-        try:
-            result = await self._runtime.invoke(handle, payload, ctx)
-        finally:
-            await self._runtime.teardown(handle)
-
-        trace_id = await self._record(request, version, result, started_at)
-        return InvokeResult(
-            output=result.output,
-            error=result.error,
-            trace_id=trace_id,
-            duration_ms=result.duration_ms,
-            cost_usd=result.cost_usd,
-            version_label=version.version_label,
         )
 
     async def _record(
@@ -848,21 +904,6 @@ class InvokeService:
         except Exception:  # noqa: BLE001 - 观测失败不该影响业务调用
             logger.warning("记录调用 Trace 失败", exc_info=True)
             return None
-
-    async def stream_channel(self, request: ChannelInvocation):
-        """流式调用。
-
-        本地沙箱的 entrypoint 是普通函数、拿不到增量输出，所以这里**只发一帧**：
-        要么完整结果、要么错误。真正的增量要等 Runtime 支持流式协议，
-        接口形状先定下来，避免以后改调用方。
-        """
-        result = await self.invoke_channel(request)
-        if result.error is not None:
-            yield InvokeEvent(error=result.error, finish_reason="error")
-            return
-        yield InvokeEvent(delta=_as_text(result.output))
-        yield InvokeEvent(finish_reason="stop", usage=None)
-
 
 def _as_text(value: Any) -> str:
     if isinstance(value, str):

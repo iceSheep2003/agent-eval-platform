@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Mapping, Protocol, runtime_checkable
 
 from ....contracts.common import Id
 from ....contracts.execution import InvokeResult
@@ -78,6 +78,17 @@ class RuntimePort(Protocol):
     async def invoke(
         self, handle: RuntimeHandle, payload: Mapping[str, Any], ctx: InvocationContext
     ) -> InvokeResult: ...
+
+    def invoke_stream(
+        self, handle: RuntimeHandle, payload: Mapping[str, Any], ctx: InvocationContext
+    ) -> AsyncIterator[str]:
+        """流式调用，每次 `yield` 一段增量文本。
+
+        适配器不必自己造增量：entrypoint 是普通函数时，实现方应当调用一次
+        `invoke` 再把整段输出作为唯一一段 yield 出去。这样调用方
+        （`InvokeService`）不用区分「真流式」与「一次性」。
+        """
+        ...
 
     async def teardown(self, handle: RuntimeHandle) -> None: ...
 

@@ -81,12 +81,14 @@ export default function AgentChatPage() {
     [hubId, agentId, channel],
   );
 
-  const { onRequest, abort, isRequesting, messages } = useXChat<ChatMessage, ChatMessage>({
+  // Input 用 any：`OpenAIChatProvider` 要求把用户消息包在 `messages` 里传，
+  // 而不是直接传一条 ChatMessage。
+  const { onRequest, abort, isRequesting, messages } = useXChat<any, ChatMessage>({
     provider,
     conversationKey: `${agentId}:${channel}`,
     requestPlaceholder: { role: 'assistant', content: '' },
-    requestFallback: (_, info) => ({
-      role: 'assistant',
+    requestFallback: (_params: unknown, info: { error: Error }) => ({
+      role: 'assistant' as const,
       content: `调用失败：${info.error.message}`,
     }),
   });
@@ -175,7 +177,7 @@ export default function AgentChatPage() {
             onSubmit={(text) => {
               if (!text.trim()) return;
               setInput('');
-              onRequest({ role: 'user', content: text });
+              onRequest({ messages: [{ role: 'user', content: text }] });
             }}
             onCancel={abort}
             placeholder={bound ? '输入消息，按 Enter 发送' : '该通道未绑定版本'}

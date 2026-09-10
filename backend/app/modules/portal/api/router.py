@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Annotated, AsyncIterator
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -55,6 +56,8 @@ from .schemas import (
     PortalUserDTO,
     SetPortalUserStatusRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["portal"])
 
@@ -340,11 +343,14 @@ async def portal_chat(
         )
 
     async def stream() -> AsyncIterator[str]:
-        """**生成器必须自己兜住所有异常**——响应头一旦发出，
-        `app/api/errors.py` 的全局 handler 就再也修不了这条流了。"""
+        """把 `InvokeEvent` 逐段转成 OpenAI 兼容分块。
+
+        **生成器必须自己兜住所有异常**——响应头一旦发出，`app/api/errors.py`
+        的全局 handler 就再也修不了这条流了。
+        """
         created = int(container.clock.now().timestamp())
         chunk_id = f"chatcmpl-{hub_agent_id}"
-        # 先发角色帧，让前端的空气泡立刻出现，不必等被测 Agent 跑完。
+        # 先发角色帧，让前端的空气泡立刻出现，不必等被测 Agent 吐出第一个字。
         yield _chunk(
             chunk_id=chunk_id,
             model=model,
@@ -352,54 +358,58 @@ async def portal_chat(
             delta={"role": "assistant", "content": ""},
         )
 
-        task = asyncio.create_task(
-            portal.chat(
-                hub_agent_id=hub_agent_id,
-                hub_id=hub.id,
-                workspace_id=hub.workspace_id,
-                channel=channel,
-                message=message,
-                messages=payload.messages,
-                timeout_seconds=payload.timeout_seconds,
-            )
+        events = portal.chat_stream(
+            hub_agent_id=hub_agent_id,
+            hub_id=hub.id,
+            workspace_id=hub.workspace_id,
+            channel=channel,
+            message=message,
+            messages=payload.messages,
+            timeout_seconds=payload.timeout_seconds,
         )
         try:
-            while not task.done():
-                done, _ = await asyncio.wait({task}, timeout=KEEPALIVE_SECONDS)
-                if done:
+            while True:
+                # 心跳不能 race 整个消费协程：那样会把生成器丢在半路。
+                # 把「取下一段」包成 task，超时就发注释帧，task 原样留着。
+                pending = asyncio.ensure_future(events.__anext__())
+                while True:
+                    done, _ = await asyncio.wait({pending}, timeout=KEEPALIVE_SECONDS)
+                    if done:
+                        break
+                    if await request.is_disconnected():
+                        pending.cancel()
+                        return
+                    yield ": keep-alive\n\n"
+                try:
+                    event = pending.result()
+                except StopAsyncIteration:
                     break
-                if await request.is_disconnected():
-                    task.cancel()
-                    return
-                yield ": keep-alive\n\n"
-            result = await task
+                if event.error is not None:
+                    yield _error_frame("invoke_failed", event.error)
+                    break
+                if event.delta:
+                    yield _chunk(
+                        chunk_id=chunk_id,
+                        model=model,
+                        created=created,
+                        delta={"content": event.delta},
+                    )
+                if event.finish_reason == "stop":
+                    yield _chunk(
+                        chunk_id=chunk_id,
+                        model=model,
+                        created=created,
+                        delta={},
+                        finish_reason="stop",
+                    )
         except DomainError as exc:
+            # 鉴权/参数错误在产出第一个事件之前抛出——但流已经开始了，只能当事件送出
             yield _error_frame(exc.code, str(exc))
-            yield "data: [DONE]\n\n"
-            return
         except asyncio.CancelledError:
             return
         except Exception as exc:  # noqa: BLE001 - 流已开始，只能自己收尾
-            yield _error_frame(Errors.NOT_FOUND.code, f"{type(exc).__name__}: {exc}")
-            yield "data: [DONE]\n\n"
-            return
-
-        if result.error is not None:
-            yield _error_frame("invoke_failed", result.error)
-        else:
-            yield _chunk(
-                chunk_id=chunk_id,
-                model=model,
-                created=created,
-                delta={"content": _as_text(result.output)},
-            )
-            yield _chunk(
-                chunk_id=chunk_id,
-                model=model,
-                created=created,
-                delta={},
-                finish_reason="stop",
-            )
+            logger.warning("流式对话中途失败", exc_info=True)
+            yield _error_frame("invoke_failed", f"{type(exc).__name__}: {exc}")
         yield "data: [DONE]\n\n"
 
     headers = {

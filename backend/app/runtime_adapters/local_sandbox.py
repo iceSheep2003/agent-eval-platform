@@ -12,7 +12,7 @@ import importlib
 import inspect
 import logging
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, AsyncIterator, Callable, Mapping
 
 from ..modules.execution.application.ports import (
     InvocationContext,
@@ -43,6 +43,84 @@ def _public_arguments(
     ):
         return public
     return {key: value for key, value in public.items() if key in signature.parameters}
+
+
+class _InvokeFailure(Exception):
+    """被测代码失败。带**已产生的增量**——流到一半挂了，前面的字不能丢。"""
+
+    def __init__(self, message: str, produced: str = "") -> None:
+        super().__init__(message)
+        self.message = message
+        self.produced = produced
+
+    def to_result(self, started: float) -> InvokeResult:
+        return InvokeResult(
+            output=self.produced or None,
+            error=self.message,
+            duration_ms=int((time.perf_counter() - started) * 1000),
+        )
+
+
+async def _iterate(
+    generator: AsyncIterator[Any], timeout_seconds: float
+) -> AsyncIterator[str]:
+    """带超时的异步生成器遍历。
+
+    超时按**整体**算：`asyncio.timeout` 覆盖整个循环，而不是每段重置——
+    否则一个持续吐字的 Agent 可以无限拖住一次调用。
+    """
+    produced: list[str] = []
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            async for piece in generator:
+                text = _as_text(piece)
+                if text:
+                    produced.append(text)
+                    yield text
+    except asyncio.TimeoutError as exc:
+        raise _InvokeFailure(f"执行超时（{timeout_seconds}s）", "".join(produced)) from exc
+    except Exception as exc:  # noqa: BLE001 - 被测代码的异常要如实记录，不能吞
+        logger.warning("被测函数流式执行时抛出异常: %r", exc)
+        raise _InvokeFailure(
+            f"{type(exc).__name__}: {exc}", "".join(produced)
+        ) from exc
+
+
+def _as_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    import json
+
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _target_of(payload: Mapping[str, Any]) -> Callable[..., Any]:
+    entrypoint = payload.get("__entrypoint__")
+    if not entrypoint:
+        raise EntrypointError("payload 缺少 __entrypoint__")
+    return _resolve(str(entrypoint))
+
+
+def _arguments_for(
+    target: Callable[..., Any], payload: Mapping[str, Any]
+) -> dict[str, Any]:
+    """**只传公开输入**：payload 由 execution 构造，不含 expected_output。
+
+    按签名过滤：对话调用会带上 `messages`，而多数被测函数只接受 `input`，
+    全量透传会直接 TypeError。带 **kwargs 的函数仍然拿到全部键。
+    """
+    arguments = _public_arguments(target, payload)
+    # 能力资产按需注入：被测函数没声明 `capabilities` 形参就不传，
+    # 否则现有 Agent 的签名会被这个新参数打破。
+    capabilities = payload.get("__capabilities__")
+    if capabilities and "capabilities" in inspect.signature(target).parameters:
+        arguments["capabilities"] = capabilities
+    return arguments
 
 
 def _resolve(entrypoint: str) -> Callable[..., Any]:
@@ -76,21 +154,26 @@ class LocalSandboxRuntime:
     async def invoke(
         self, handle: RuntimeHandle, payload: Mapping[str, Any], ctx: InvocationContext
     ) -> InvokeResult:
-        entrypoint = payload.get("__entrypoint__")
-        if not entrypoint:
-            raise EntrypointError("payload 缺少 __entrypoint__")
-        target = _resolve(str(entrypoint))
-
-        # **只传公开输入**：payload 由 execution 构造，不含 expected_output。
-        # 按签名过滤：对话调用会带上 `messages`，而多数被测函数只接受 `input`，
-        # 全量透传会直接 TypeError。带 **kwargs 的函数仍然拿到全部键。
-        arguments = _public_arguments(target, payload)
-        # 能力资产按需注入：被测函数没声明 `capabilities` 形参就不传，
-        # 否则现有 Agent 的签名会被这个新参数打破。
-        capabilities = payload.get("__capabilities__")
-        if capabilities and "capabilities" in inspect.signature(target).parameters:
-            arguments["capabilities"] = capabilities
+        target = _target_of(payload)
+        arguments = _arguments_for(target, payload)
         started = time.perf_counter()
+
+        # 异步生成器 entrypoint：非流式调用也要能用——把增量拼成完整输出。
+        if inspect.isasyncgenfunction(target):
+            try:
+                chunks = [
+                    piece
+                    async for piece in _iterate(
+                        target(**arguments), ctx.timeout_seconds
+                    )
+                ]
+            except _InvokeFailure as failure:
+                return failure.to_result(started)
+            return InvokeResult(
+                output="".join(chunks),
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
+
         try:
             if inspect.iscoroutinefunction(target):
                 output = await asyncio.wait_for(
@@ -117,6 +200,25 @@ class LocalSandboxRuntime:
             output=output,
             duration_ms=int((time.perf_counter() - started) * 1000),
         )
+
+    async def invoke_stream(
+        self, handle: RuntimeHandle, payload: Mapping[str, Any], ctx: InvocationContext
+    ) -> AsyncIterator[str]:
+        """有增量就逐段吐，没有就整段吐一次。
+
+        真正的增量只在 entrypoint 是**异步生成器**时存在；普通函数（含协程）
+        拿不到中间态，退化成一段。
+        """
+        target = _target_of(payload)
+        arguments = _arguments_for(target, payload)
+        if inspect.isasyncgenfunction(target):
+            async for piece in _iterate(target(**arguments), ctx.timeout_seconds):
+                yield piece
+            return
+        result = await self.invoke(handle, payload, ctx)
+        if result.error is not None:
+            raise EntrypointError(result.error)
+        yield _as_text(result.output)
 
     async def teardown(self, handle: RuntimeHandle) -> None:
         return None

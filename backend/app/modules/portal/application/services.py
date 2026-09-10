@@ -10,12 +10,17 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Mapping, Sequence
+from typing import Any, AsyncIterator, Mapping, Sequence
 
 from ....contracts.asset import AssetQueryPort
 from ....contracts.common import Channel, Id
 from ....contracts.errors import DomainError, Errors, NotFound
-from ....contracts.execution import ChannelInvocation, InvokePort, InvokeResult
+from ....contracts.execution import (
+    ChannelInvocation,
+    InvokeEvent,
+    InvokePort,
+    InvokeResult,
+)
 from ....persistence import UnitOfWork
 from ....persistence.database import Database
 from ....shared.clock import Clock
@@ -543,7 +548,58 @@ class PortalService:
         messages: Sequence[Mapping[str, object]] = (),
         timeout_seconds: float = 60.0,
     ) -> InvokeResult:
-        """按通道打一次。**版本由通道解析**，调用方给不了版本号。"""
+        """按通道打一次（非流式）。**版本由通道解析**，调用方给不了版本号。"""
+        request = await self._authorize(
+            hub_agent_id=hub_agent_id,
+            hub_id=hub_id,
+            workspace_id=workspace_id,
+            channel=channel,
+            message=message,
+            messages=messages,
+            timeout_seconds=timeout_seconds,
+        )
+        return await self._invoke.invoke_channel(request)
+
+    async def chat_stream(
+        self,
+        *,
+        hub_agent_id: str,
+        hub_id: str,
+        workspace_id: str,
+        channel: Channel,
+        message: str,
+        messages: Sequence[Mapping[str, object]] = (),
+        timeout_seconds: float = 60.0,
+    ) -> AsyncIterator[InvokeEvent]:
+        """按通道流式打一次。
+
+        **鉴权与参数解析在返回迭代器之前完成**——它们抛的是普通 HTTP 错误，
+        调用方还能正常回 4xx；一旦开始产出事件，失败就只能走 `error` 事件了。
+        """
+        request = await self._authorize(
+            hub_agent_id=hub_agent_id,
+            hub_id=hub_id,
+            workspace_id=workspace_id,
+            channel=channel,
+            message=message,
+            messages=messages,
+            timeout_seconds=timeout_seconds,
+        )
+        async for event in self._invoke.stream_channel(request):
+            yield event
+
+    async def _authorize(
+        self,
+        *,
+        hub_agent_id: str,
+        hub_id: str,
+        workspace_id: str,
+        channel: Channel,
+        message: str,
+        messages: Sequence[Mapping[str, object]],
+        timeout_seconds: float,
+    ) -> ChannelInvocation:
+        """把「这次调用合不合法」全部查完，返回可执行的请求。"""
         if channel not in PORTAL_CHANNELS:
             raise DomainError(
                 Errors.NOT_FOUND,
@@ -575,16 +631,14 @@ class PortalService:
                 Errors.CREDENTIAL_SCOPE_VIOLATION,
                 f"该密钥只允许调用 {credential.channel.value} 通道",
             )
-        return await self._invoke.invoke_channel(
-            ChannelInvocation(
-                workspace_id=workspace_id,
-                asset_id=row.asset_id,
-                channel=channel,
-                input=message,
-                messages=tuple(messages),
-                timeout_seconds=timeout_seconds,
-                credential_id=binding.deployment_credential_id,
-            )
+        return ChannelInvocation(
+            workspace_id=workspace_id,
+            asset_id=row.asset_id,
+            channel=channel,
+            input=message,
+            messages=tuple(messages),
+            timeout_seconds=timeout_seconds,
+            credential_id=binding.deployment_credential_id,
         )
 
 

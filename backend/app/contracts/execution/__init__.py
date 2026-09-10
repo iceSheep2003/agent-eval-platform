@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Mapping, Protocol, runtime_checkable
 
 from ..common import (
     Channel,
@@ -103,6 +103,15 @@ class InvokePort(Protocol):
     """由 execution 实现；portal 的对话中继消费。"""
 
     async def invoke_channel(self, request: ChannelInvocation) -> InvokeResult: ...
+
+    def stream_channel(self, request: ChannelInvocation) -> AsyncIterator[InvokeEvent]:
+        """流式调用。
+
+        **参数校验在产出第一个事件之前完成**：通道没绑版本、版本没有 entrypoint
+        这类错误，调用方还能当普通 HTTP 错误处理，不必塞进流里。
+        运行时失败则只能作为 `error` 事件送出。
+        """
+        ...
 
 
 __all__ = [
