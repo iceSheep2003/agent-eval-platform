@@ -51,6 +51,45 @@
 | 3 | ~~`register.py` 改为 `json()["data"]["id"]`~~ | — | ✅ M1a 已改 |
 | 4 | ~~前端 `dataField` + `errorCode` 改 `string`~~ | — | ✅ M4 已改（`dataField` 写在 `config/config.ts` 的插件配置里） |
 
+### 遗留现场：`main` 上被 stash 的一批未提交改动
+
+> **不是待办，是必须交接的现场。** 这批改动不是本分支产出的，来路未确认。
+
+2026-09-10 把 `feat/showcase-portal` 快进合并到 `main` 时，`main` 工作区有 20 个
+未提交文件，且改的恰好是本分支同为 `asset` 模块的文件，`--ff-only` 因此中止。
+经确认后 `git stash push -u` 暂存，合并得以完成。
+
+**恢复**：
+
+```bash
+cd "/Users/ice.sheep/Documents/ChatGPT/agent评测开发"
+git stash list     # 确认 stash@{0} 是本条
+git stash pop      # 或 apply（保留副本）
+```
+
+**暂存内容**：
+
+| 类型 | 文件 |
+| --- | --- |
+| 新代码 | `asset/domain/lifecycle.py`、`shared/state_machine.py` |
+| 迁移 | `asset_0004_created_by.py` |
+| 测试 | `test_asset_lifecycle_flow.py`、`unit/asset/domain/test_lifecycle.py` |
+| 文档 | `backend-capability-assets.md`、`capability-lifecycle-management.md` |
+| 改动 | `contracts/common.py`、`asset` 的 models/tables/repositories/services/router、`frontend-pro` 的 capability 页 |
+
+⚠️ **恢复后必须改迁移号**：那份迁移是 `asset_0004 <- asset_0003`，与合并进来的
+`asset_0004_resource_secret.py` **完全撞号**。当前 `asset` 链已到 `asset_0006`：
+
+```
+asset_0001 → 0002_asset_binding → 0003_credential_channel
+           → 0004_resource_secret → 0005_soft_delete → 0006_published_at
+```
+
+改法：文件名与 `revision` 改成 `asset_0007_created_by`，`down_revision` 改成 `'asset_0006'`。
+不改会在 `alembic upgrade` 时报 revision 重复。
+
+**已确认无损失**：stash 前后 `git status` 逐字节一致，没有文件被覆盖。
+
 ### Alembic 的既定做法（已落地）
 
 **单一 Alembic 环境 + 按模块 `branch_labels`**，而不是每个模块一套环境：
