@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -10,20 +10,14 @@ from pydantic import BaseModel, Field
 from ....api.deps import Actor, assert_permission, get_container
 from ....container import Container
 from ....contracts.common import Channel, GateScope
-from ....contracts.errors import DomainError, Errors
+from ....contracts.errors import DomainError, Errors, PermissionDenied
 from ....contracts.identity import Permission, ResourceRef
 from ....schemas.response import list_response, ok
 from ..application.services import DeliveryService
+from ..domain.lifecycle import LifecyclePolicy
 from ..domain.models import Promotion, Rollback, ShadowRoute
 
 router = APIRouter(tags=["delivery"])
-
-#: 目标通道 → 需要的权限点。LIVE 是生产发布，单独收紧。
-PROMOTE_PERMISSION = {
-    Channel.LIVESH: Permission.VERSION_PROMOTE_LIVESH,
-    Channel.LIVE: Permission.VERSION_PROMOTE_LIVE,
-}
-
 
 class PromoteRequest(BaseModel):
     asset_id: str
@@ -86,18 +80,20 @@ def get_delivery_service(
     return container.delivery
 
 
-def _assert_confirm(container: Container, actor, permission: Permission) -> None:
+def _assert_confirm(
+    container: Container, actor, permission: Permission, required: bool
+) -> None:
     """`requires_reauth` 的动作需要显式确认。
 
+    **是否需要再认证来自策略**，不是权限表里的固定标记——这样「发布到 LIVE 要二次确认」
+    是配置出来的，而不是写死的。
+
     这是**占位实现**：真正的 re-auth ticket（跳 IdP 重新认证）见架构文档 §5.1.5。
-    在此之前至少让「需要再认证」这个判定产生实际效果，而不是只在权限表里躺着。
     """
     decision = container.authorizer.decide(actor.subject, permission, None)
     if not decision.allowed:
-        from ....contracts.errors import PermissionDenied
-
         raise PermissionDenied(permission.value, decision.reason)
-    if decision.requires_reauth:
+    if required or decision.requires_reauth:
         raise DomainError(Errors.REAUTH_REQUIRED, "该操作需要二次确认（confirm=true）")
 
 
@@ -147,11 +143,14 @@ async def create_promotion(
     service: Annotated[DeliveryService, Depends(get_delivery_service)],
 ) -> dict:
     target = Channel(payload.to_channel)
-    permission = PROMOTE_PERMISSION[target]
+    # 权限点与「是否要二次确认」都写在策略里——路由不硬编码任何通道差异
+    rule = await service.pending_transition(
+        payload.asset_id, payload.version_id, target, actor.workspace_id
+    )
     if payload.confirm:
-        assert_permission(container, actor, permission)
+        assert_permission(container, actor, rule.permission)
     else:
-        _assert_confirm(container, actor, permission)
+        _assert_confirm(container, actor, rule.permission, rule.requires_reauth)
     promotion = await service.request_promotion(
         asset_id=payload.asset_id,
         version_id=payload.version_id,
@@ -233,7 +232,7 @@ async def rollback(
     if payload.confirm:
         assert_permission(container, actor, Permission.VERSION_ROLLBACK)
     else:
-        _assert_confirm(container, actor, Permission.VERSION_ROLLBACK)
+        _assert_confirm(container, actor, Permission.VERSION_ROLLBACK, required=True)
     item = await service.rollback(
         asset_id=agent_id,
         channel=Channel(payload.channel),
@@ -305,3 +304,57 @@ async def configure_shadow_route(
 
 
 __all__ = ["GateScope", "router"]
+
+
+# --------------------------------------------------------------------------- #
+# 治理策略
+# --------------------------------------------------------------------------- #
+
+
+class LifecyclePolicyRequest(BaseModel):
+    """整套策略。校验交给 `LifecyclePolicy.from_dict`，这里只透传。"""
+
+    transitions: list[dict[str, Any]]
+
+
+@router.get("/lifecycle-policy")
+async def get_lifecycle_policy(
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    service: Annotated[DeliveryService, Depends(get_delivery_service)],
+) -> dict:
+    """当前生效的治理策略（工作区自定义优先，否则是平台默认）。
+
+    前端要展示「TEST→LIVESH 要做哪些检查、谁能操作」，读这个就够。
+    """
+    assert_permission(container, actor, Permission.ASSET_READ)
+    policy = await service.policy_for(actor.workspace_id)
+    return ok(policy.as_dict())
+
+
+@router.put("/lifecycle-policy")
+async def put_lifecycle_policy(
+    payload: LifecyclePolicyRequest,
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    service: Annotated[DeliveryService, Depends(get_delivery_service)],
+) -> dict:
+    """覆盖本工作区的治理策略。写坏了也能用 reset 退回默认。"""
+    assert_permission(container, actor, Permission.GATE_CONFIGURE)
+    try:
+        policy = LifecyclePolicy.from_dict({"transitions": payload.transitions})
+    except (ValueError, KeyError) as exc:
+        raise DomainError(Errors.VALIDATION_FAILED, f"策略格式非法：{exc}") from exc
+    saved = await service.save_policy(actor.workspace_id, policy, actor.user_id)
+    return ok(saved.as_dict())
+
+
+@router.post("/lifecycle-policy/reset")
+async def reset_lifecycle_policy(
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    service: Annotated[DeliveryService, Depends(get_delivery_service)],
+) -> dict:
+    assert_permission(container, actor, Permission.GATE_CONFIGURE)
+    policy = await service.reset_policy(actor.workspace_id)
+    return ok(policy.as_dict())

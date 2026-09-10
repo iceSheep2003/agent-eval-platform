@@ -56,3 +56,13 @@ class ShadowRouteRow(Base, TimestampMixin):
     #: 固定为 copy_in_only：只把流量复制进影子，候选输出永不返回给真实用户
     direction: Mapped[str] = mapped_column(String(24), nullable=False, default="copy_in_only")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class LifecyclePolicyRow(Base, TimestampMixin):
+    """工作区级的治理策略覆盖。没有行 = 用平台默认策略。"""
+
+    __tablename__ = "delivery_lifecycle_policy"
+
+    workspace_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    payload: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    updated_by: Mapped[str] = mapped_column(String(64), nullable=False)

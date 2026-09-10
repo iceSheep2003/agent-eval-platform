@@ -271,6 +271,41 @@ async def _scenario(tmp_path) -> None:
                 reason="   ", workspace_id=workspace_id, actor_id=owner,
             )
 
+        # --- 治理策略是配置，不是代码 -------------------------------------
+        from backend.app.modules.delivery.domain.lifecycle import (
+            DEFAULT_POLICY,
+            CheckName,
+            LifecyclePolicy,
+        )
+
+        # 默认策略：TEST→LIVESH 要门禁 + 影子路由
+        default = await container.delivery.policy_for(workspace_id)
+        to_livesh = default.rule_for(Channel.TEST, Channel.LIVESH)
+        assert [c.name for c in to_livesh.enabled_checks()] == [
+            CheckName.PROMOTION_GATE,
+            CheckName.SHADOW_ROUTE,
+        ]
+
+        # 关掉影子路由检查 —— 不改代码，行为就变了
+        payload = DEFAULT_POLICY.as_dict()
+        for transition in payload["transitions"]:
+            transition["checks"] = [
+                {**check, "enabled": check["name"] != CheckName.SHADOW_ROUTE.value}
+                for check in transition["checks"]
+            ]
+        await container.delivery.save_policy(
+            workspace_id, LifecyclePolicy.from_dict(payload), owner
+        )
+        effective = await container.delivery.policy_for(workspace_id)
+        assert [c.name for c in effective.rule_for(Channel.TEST, Channel.LIVESH).enabled_checks()] == [
+            CheckName.PROMOTION_GATE
+        ]
+
+        # 重置回默认
+        await container.delivery.reset_policy(workspace_id)
+        restored = await container.delivery.policy_for(workspace_id)
+        assert restored.as_dict() == DEFAULT_POLICY.as_dict()
+
         # 审计留痕：两次晋级（TEST→LIVESH、LIVESH→LIVE）各一行
         promotions = await container.delivery.list_promotions(agent.id, workspace_id)
         assert [(p.from_channel.value, p.to_channel.value) for p in promotions] == [

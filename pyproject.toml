@@ -40,3 +40,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 agent_eval = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests", "tests"]
+# 未 await 的协程只产生 RuntimeWarning、不报错——`AsyncSession.merge` 漏 await
+# 会让写库静默失效。把它升级成失败，这类 bug 就不会再溜过去。
+filterwarnings = ["error::RuntimeWarning"]

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....contracts.common import Channel
 from ....shared.clock import ensure_aware
+from ..domain.lifecycle import LifecyclePolicy
 from ..domain.models import Promotion, Rollback, ShadowRoute
-from .tables import PromotionRow, RollbackRow, ShadowRouteRow
+from .tables import LifecyclePolicyRow, PromotionRow, RollbackRow, ShadowRouteRow
 
 
 def _promotion(row: PromotionRow) -> Promotion:
@@ -141,4 +142,34 @@ class ShadowRouteRepository:
                 direction=route.direction,
                 enabled=route.enabled,
             )
+        )
+
+
+class LifecyclePolicyRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, workspace_id: str) -> LifecyclePolicy | None:
+        row = await self._session.get(LifecyclePolicyRow, workspace_id)
+        if row is None:
+            return None
+        try:
+            return LifecyclePolicy.from_dict(dict(row.payload or {}))
+        except (ValueError, KeyError):
+            # 存坏了就退回默认策略，不能因为一条脏配置让晋级整个不可用
+            return None
+
+    async def upsert(
+        self, workspace_id: str, policy: LifecyclePolicy, actor_id: str
+    ) -> None:
+        # AsyncSession.merge 是协程——漏 await 会静默不落库（策略一直读回默认值）
+        await self._session.merge(
+            LifecyclePolicyRow(
+                workspace_id=workspace_id, payload=policy.as_dict(), updated_by=actor_id
+            )
+        )
+
+    async def remove(self, workspace_id: str) -> None:
+        await self._session.execute(
+            delete(LifecyclePolicyRow).where(LifecyclePolicyRow.workspace_id == workspace_id)
         )
