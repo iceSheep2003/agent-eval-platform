@@ -17,6 +17,8 @@ from sqlalchemy import text
 from .api import CONSOLE_PREFIXES, MACHINE_PREFIX
 from .api import errors as api_errors
 from .api.agents_view import router as agents_view_router
+from .api.impact import router as impact_router
+from .modules.improvement.api.router import router as improvement_router
 from .api.overview import router as overview_router
 from .api.regression import router as regression_router
 from .container import Container
@@ -49,6 +51,8 @@ CONSOLE_ROUTERS = (
     overview_router,
     regression_router,
     portal_router,
+    impact_router,
+    improvement_router,
 )
 
 #: 机器面路由表（SDK 上报、Gateway）。只挂 `/v1`，不走 `/api`。

@@ -17,6 +17,8 @@ from .modules.delivery.application.services import DeliveryService
 from .modules.execution.application.services import ExecutionHandlers, InvokeService, RunService
 from .runtime_adapters.local_sandbox import LocalSandboxRuntime
 from .modules.identity.application.services import IdentityService
+from .modules.improvement.application.impact import ImpactService
+from .modules.improvement.application.services import ProposalService
 from .modules.memory.application.services import MemoryService
 from .modules.identity.domain.authorizer import Authorizer
 from .modules.observability.application.services import TraceService
@@ -51,6 +53,8 @@ class Container:
     portal: PortalService
     portal_limiter: PortalRateLimiter
     audit: AuditService
+    proposals: ProposalService
+    impact: ImpactService
     command_queue: CommandQueue
 
     @classmethod
@@ -116,6 +120,8 @@ class Container:
         portal = PortalService(database, resolved_clock, assets, invoke)
         portal_limiter = PortalRateLimiter(database, resolved_clock)
         audit = AuditService(database, resolved_clock)
+        impact = ImpactService(assets)
+        proposals = ProposalService(database, resolved_clock, assets, impact)
         command_queue = CommandQueue(
             database,
             resolved_clock,
@@ -143,6 +149,8 @@ class Container:
             portal=portal,
             portal_limiter=portal_limiter,
             audit=audit,
+            proposals=proposals,
+            impact=impact,
             command_queue=command_queue,
         )
 

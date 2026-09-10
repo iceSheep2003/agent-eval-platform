@@ -119,6 +119,109 @@ class AssetService:
             report, connect_type=connect_type, require_streaming=require_streaming
         )
 
+    # -- 演化（improvement 的 AssetEvolutionPort）---------------------------
+
+    async def get_asset_ref(self, asset_id: str, workspace_id: str) -> AssetRef:
+        """演化端口用：拿不到就 404，而不是返回 None——提案指向不存在的资产是错误。"""
+        ref = await self.get_asset(asset_id, workspace_id)
+        if ref is None:
+            raise NotFound("资产", asset_id)
+        return ref
+
+    async def create_version_from_proposal(
+        self,
+        *,
+        asset_id: str,
+        workspace_id: str,
+        created_by: str,
+        spec: Mapping[str, Any],
+    ) -> str:
+        """按提案冻新版本。**旧版本不动**——回退就是把通道指针改回去。"""
+        version = await self.create_version(
+            asset_id=asset_id,
+            workspace_id=workspace_id,
+            created_by=created_by,
+            spec=spec,
+        )
+        return version.id
+
+    async def promote_asset(self, asset_id: str, workspace_id: str) -> None:
+        """**发布到公共目录**，之后同工作区的其他 Agent 就能 `fork_from` 派生它。
+
+        发布是独立于 `tenant_scope` 的一个轴——后者管租户隔离，不是「能不能被抄」。
+        """
+        await self.get_asset_ref(asset_id, workspace_id)
+        async with UnitOfWork(self._db) as uow:
+            await AssetRepository(uow.session).set_published(
+                asset_id, self._clock.now()
+            )
+            await uow.commit()
+
+    # -- 公共目录与派生 ------------------------------------------------------
+
+    async def list_publishable(
+        self, workspace_id: str, kind: AssetKind | None = None
+    ) -> Sequence[Asset]:
+        """**公共目录**：本工作区内 `tenant_scope=workspace_shared` 的资产。
+
+        这是「从公共 skill 里拿自己的那份」的第一步——先看到有哪些可拿。
+        """
+        async with UnitOfWork(self._db) as uow:
+            return list(
+                await AssetRepository(uow.session).list_published(workspace_id, kind)
+            )
+
+    async def _is_published(self, asset_id: str, workspace_id: str) -> bool:
+        async with UnitOfWork(self._db) as uow:
+            rows = await AssetRepository(uow.session).list_published(workspace_id)
+        return any(item.id == asset_id for item in rows)
+
+    async def fork_from(
+        self,
+        *,
+        source_asset_id: str,
+        workspace_id: str,
+        owner_id: str,
+        name: str,
+        description: str = "",
+    ) -> Asset:
+        """从公共资产**派生一份自己的**：复制当前 LIVE 版本的 spec 到新资产。
+
+        派生之后两条线**各自独立演化**——源资产升级不会影响你，
+        这也正是「拿一份自己的」的意义。
+        """
+        source = await self.get_asset(source_asset_id, workspace_id)
+        if source is None:
+            raise NotFound("源资产", source_asset_id)
+        published = await self.get_asset(asset_id=source_asset_id, workspace_id=workspace_id)
+        if published is None or not await self._is_published(source_asset_id, workspace_id):
+            raise DomainError(
+                Errors.PERMISSION_DENIED,
+                f"资产 {source_asset_id} 未发布到公共目录，不能派生",
+            )
+        source_version = await self.version_of_channel(
+            source_asset_id, Channel.LIVE, workspace_id
+        )
+        if source_version is None:
+            raise DomainError(
+                Errors.CHANNEL_UNBOUND,
+                f"源资产 {source_asset_id} 的 LIVE 通道没有绑定版本，无处可派生",
+            )
+
+        spec = dict(source_version.spec)
+        spec["forked_from"] = {"asset_id": source_asset_id, "version_id": source_version.id}
+
+        return await self._register(
+            workspace_id=workspace_id,
+            owner_id=owner_id,
+            kind=source.kind,
+            name=name,
+            description=description or f"派生自 {source.name}",
+            spec=spec,
+            connect_type=spec.get("connect_type"),
+            tenant_id=None,
+        )
+
     # -- 查询 ----------------------------------------------------------------
 
     async def list_agents(self, workspace_id: str) -> Sequence[Asset]:
@@ -761,6 +864,20 @@ class AssetService:
             if not removed:
                 raise NotFound("引用", binding_id)
             await uow.commit()
+
+    async def consumers_of_asset(
+        self, provider_asset_id: str, workspace_id: str
+    ) -> Sequence[str]:
+        """实现 `contracts.asset.AssetQueryPort`：谁引用了我（只要 id）。"""
+        rows = await self.list_bindings_of_provider(provider_asset_id, workspace_id)
+        return sorted({item.consumer_asset_id for item in rows})
+
+    async def providers_of_asset(
+        self, consumer_asset_id: str, workspace_id: str
+    ) -> Sequence[str]:
+        """实现 `contracts.asset.AssetQueryPort`：我引用了谁（只要 id）。"""
+        rows = await self.list_bindings_of_consumer(consumer_asset_id, workspace_id)
+        return sorted({item.provider_asset_id for item in rows})
 
     async def list_bindings_of_provider(
         self, provider_asset_id: str, workspace_id: str

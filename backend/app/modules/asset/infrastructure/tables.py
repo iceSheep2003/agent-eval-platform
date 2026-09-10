@@ -32,6 +32,11 @@ class AssetRow(Base, TimestampMixin):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: **发布**时间。与 `tenant_scope` 是两个轴：后者是租户隔离，前者是
+    #: 「是否进公共目录供他人派生」。未发布 = NULL。
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class AssetVersionRow(Base, TimestampMixin):

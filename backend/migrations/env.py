@@ -31,6 +31,7 @@ import backend.app.modules.evaluation.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.execution.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.observability.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.delivery.infrastructure.tables  # noqa: E402,F401
+import backend.app.modules.improvement.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.memory.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.portal.infrastructure.tables  # noqa: E402,F401
 from backend.app.settings import Settings  # noqa: E402
@@ -43,6 +44,7 @@ MODULE_PREFIXES = (
     "run",
     "obs",
     "delivery",
+    "improvement",
     "memory",
     "platform",
     "portal",

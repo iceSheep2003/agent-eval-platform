@@ -139,6 +139,20 @@ class AssetQueryPort(Protocol):
         """
         ...
 
+    async def consumers_of_asset(
+        self, provider_asset_id: Id, workspace_id: Id
+    ) -> Sequence[Id]:
+        """谁直接引用了我。**只给 id**——影响面分析不需要引用的细节。
+
+        刻意不返回完整的引用对象：那会把 asset 的领域模型泄进契约层，
+        而调用方真正要的只是「受影响的 Agent 有哪些」。
+        """
+        ...
+
+    async def providers_of_asset(self, consumer_asset_id: Id, workspace_id: Id) -> Sequence[Id]:
+        """我引用了谁。"""
+        ...
+
     async def channel_map(
         self, asset_id: Id, workspace_id: Id
     ) -> Mapping[Channel, Id | None]:

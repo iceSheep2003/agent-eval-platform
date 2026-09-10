@@ -164,6 +164,28 @@ class AssetRepository:
             update(AssetRow).where(AssetRow.id == asset_id).values(lifecycle=lifecycle)
         )
 
+    async def set_published(self, asset_id: str, published_at: datetime | None) -> None:
+        """发布/撤下。只动这一个字段，内容与版本都不动。"""
+        await self._session.execute(
+            update(AssetRow)
+            .where(AssetRow.id == asset_id)
+            .values(published_at=published_at)
+        )
+
+    async def list_published(
+        self, workspace_id: str, kind: AssetKind | None = None
+    ) -> Sequence[Asset]:
+        """公共目录：**显式发布过**的资产。未发布的不出现。"""
+        stmt = select(AssetRow).where(
+            AssetRow.workspace_id == workspace_id,
+            AssetRow.published_at.is_not(None),
+            AssetRow.deleted_at.is_(None),
+        )
+        if kind is not None:
+            stmt = stmt.where(AssetRow.kind == kind.value)
+        stmt = stmt.order_by(AssetRow.created_at.desc())
+        return [_asset(row) for row in (await self._session.execute(stmt)).scalars().all()]
+
     async def soft_delete(self, asset_id: str, deleted_at: datetime) -> None:
         await self._session.execute(
             update(AssetRow).where(AssetRow.id == asset_id).values(deleted_at=deleted_at)
