@@ -36,6 +36,50 @@ def echo_agent(input: str) -> str:  # noqa: A002
 
 ENTRYPOINT = f"{__name__}:echo_agent"
 
+async def _seed_shadow_traces(
+    container, agent_id: str, version_id: str, workspace_id: str, *, count: int
+) -> None:
+    """直接写影子 Trace——测晋级判定，不必绕一遍 ingest。"""
+    from datetime import timedelta
+    from decimal import Decimal
+
+    from backend.app.contracts.common import TraceOrigin, Usage
+    from backend.app.modules.observability.domain.models import TraceRecord
+    from backend.app.modules.observability.infrastructure.repositories import TraceRepository
+    from backend.app.persistence import UnitOfWork
+    from backend.app.shared.ids import new_id
+
+    now = container.clock.now()
+    async with UnitOfWork(container.database) as uow:
+        repo = TraceRepository(uow.session)
+        for index in range(count):
+            started = now - timedelta(minutes=index + 1)
+            repo.add(
+                TraceRecord(
+                    id=new_id("trace"),
+                    workspace_id=workspace_id,
+                    tenant_id=None,
+                    origin=TraceOrigin.SHADOW,
+                    asset_id=agent_id,
+                    asset_version_id=version_id,
+                    channel=None,
+                    run_id=None,
+                    trial_id=None,
+                    external_trace_id=f"shadow-{index}",
+                    name="shadow",
+                    status="success",
+                    started_at=started,
+                    ended_at=started + timedelta(milliseconds=200),
+                    input=None,
+                    output=None,
+                    usage=Usage(cost=type(Usage().cost)(Decimal("0.001"))),
+                    span_count=1,
+                    ingested_via="sdk",
+                ),
+                (),
+            )
+        await uow.commit()
+
 
 def _container(tmp_path, clock: FixedClock) -> Container:
     return Container.build(
@@ -120,6 +164,21 @@ async def _scenario(tmp_path) -> None:
             )
         assert skip.value.code == "promotion_order_violation"
 
+        # 没配影子路由就进 LIVESH → 挡住（否则「影子验证」无从谈起）
+        with pytest.raises(DomainError) as no_route:
+            await container.delivery.request_promotion(
+                asset_id=agent.id, version_id=good.id, to_channel=Channel.LIVESH,
+                run_id=None, workspace_id=workspace_id, actor_id=owner,
+            )
+        assert no_route.value.code == "gate_blocked"
+
+        # 配好影子路由（方向固定 copy_in_only）
+        route = await container.delivery.configure_shadow(
+            asset_id=agent.id, candidate_version_id=good.id, baseline_version_id=None,
+            sample_rate=0.15, workspace_id=workspace_id,
+        )
+        assert route.direction == "copy_in_only" and route.sample_rate == 0.15
+
         # 正常晋级 TEST → LIVESH
         promotion = await container.delivery.request_promotion(
             asset_id=agent.id, version_id=good.id, to_channel=Channel.LIVESH,
@@ -132,12 +191,22 @@ async def _scenario(tmp_path) -> None:
         assert bindings[Channel.LIVESH] == good.id
         assert bindings[Channel.TEST] == good.id  # 原通道仍指向它
 
-        # 影子路由：方向固定 copy_in_only
-        route = await container.delivery.configure_shadow(
-            asset_id=agent.id, candidate_version_id=good.id, baseline_version_id=None,
-            sample_rate=0.15, workspace_id=workspace_id,
+        # LIVESH → LIVE：影子样本不足 → 挡住
+        with pytest.raises(DomainError) as thin:
+            await container.delivery.request_promotion(
+                asset_id=agent.id, version_id=good.id, to_channel=Channel.LIVE,
+                run_id=None, workspace_id=workspace_id, actor_id=owner,
+            )
+        assert thin.value.code == "gate_blocked"
+        assert "影子样本不足" in str(thin.value)
+
+        # 补够影子样本后放行
+        await _seed_shadow_traces(container, agent.id, good.id, workspace_id, count=30)
+        to_live = await container.delivery.request_promotion(
+            asset_id=agent.id, version_id=good.id, to_channel=Channel.LIVE,
+            run_id=None, workspace_id=workspace_id, actor_id=owner,
         )
-        assert route.direction == "copy_in_only" and route.sample_rate == 0.15
+        assert to_live.to_channel is Channel.LIVE
 
         # 版本 B：评测不通过 → 门禁阻断
         bad = await container.assets.create_version(
@@ -202,8 +271,12 @@ async def _scenario(tmp_path) -> None:
                 reason="   ", workspace_id=workspace_id, actor_id=owner,
             )
 
-        # 审计留痕
-        assert len(await container.delivery.list_promotions(agent.id, workspace_id)) == 1
+        # 审计留痕：两次晋级（TEST→LIVESH、LIVESH→LIVE）各一行
+        promotions = await container.delivery.list_promotions(agent.id, workspace_id)
+        assert [(p.from_channel.value, p.to_channel.value) for p in promotions] == [
+            ("livesh", "live"),
+            ("test", "livesh"),
+        ]
         assert len(await container.delivery.list_rollbacks(agent.id, workspace_id)) == 1
     finally:
         await container.shutdown()

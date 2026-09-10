@@ -17,7 +17,8 @@ from ....contracts.asset import (
     CredentialContext,
     CredentialResolverPort,
 )
-from ....contracts.common import Channel, Id, TraceOrigin
+from ....contracts.common import Channel, Id, TraceOrigin, Window
+from ....contracts.observability import VersionMetrics
 from ....contracts.errors import DomainError, Errors, NotFound
 from ....persistence import UnitOfWork
 from ....persistence.database import Database
@@ -264,6 +265,30 @@ class TraceService:
             success_metric=metric_name,
             success_rate=(successes / invocations) if invocations and metric_name else None,
             attribution_coverage=(attributed / candidates) if candidates else None,
+        )
+
+    async def version_metrics(
+        self,
+        asset_version_id: Id,
+        origin: TraceOrigin,
+        window: Window,
+    ) -> VersionMetrics:
+        """实现 `contracts.observability.VersionMetricsPort`。"""
+        async with UnitOfWork(self._db) as uow:
+            repo = TraceRepository(uow.session)
+            total, success, _errors, cost = await repo.version_aggregate(
+                asset_version_id, origin.value, window.start
+            )
+            durations = list(
+                await repo.version_durations(asset_version_id, origin.value, window.start)
+            )
+        return VersionMetrics(
+            asset_version_id=asset_version_id,
+            origin=origin,
+            trace_count=total,
+            success_rate=(success / total) if total else None,
+            p95_latency_ms=_percentile(durations, 95),
+            average_cost_usd=(cost / total) if total else Decimal("0"),
         )
 
     async def agent_metrics(

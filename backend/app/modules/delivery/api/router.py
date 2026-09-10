@@ -180,6 +180,48 @@ async def list_promotions(
     return list_response([_promotion_dto(item).model_dump() for item in items])
 
 
+@router.get("/agents/{agent_id}/versions/{version_id}/shadow-comparison")
+async def shadow_comparison(
+    agent_id: str,
+    version_id: str,
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    service: Annotated[DeliveryService, Depends(get_delivery_service)],
+) -> dict:
+    """候选（shadow）vs 基线（production）的原始指标。
+
+    前端用它解释「LIVESH → LIVE 为什么被阻断」——只给一句「门禁未通过」没法排查。
+    """
+    assert_permission(
+        container,
+        actor,
+        Permission.ASSET_READ,
+        ResourceRef(kind="asset", id=agent_id, workspace_id=actor.workspace_id),
+    )
+    comparison = await service.shadow_comparison(agent_id, version_id, actor.workspace_id)
+
+    def _metrics(item):
+        if item is None:
+            return None
+        return {
+            "version_id": item.asset_version_id,
+            "origin": item.origin.value,
+            "trace_count": item.trace_count,
+            "success_rate": item.success_rate,
+            "p95_latency_ms": item.p95_latency_ms,
+            "average_cost_usd": float(item.average_cost_usd),
+        }
+
+    return ok(
+        {
+            "window_days": comparison["window_days"],
+            "min_samples": comparison["min_samples"],
+            "candidate": _metrics(comparison["candidate"]),
+            "baseline": _metrics(comparison["baseline"]),
+        }
+    )
+
+
 @router.post("/agents/{agent_id}/rollback")
 async def rollback(
     agent_id: str,

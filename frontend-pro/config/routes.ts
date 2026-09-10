@@ -21,16 +21,27 @@ export default [
     component: './evolution/skills',
   },
   {
+    path: '/skills/:id',
+    component: './evolution/skills/detail',
+    hideInMenu: true,
+  },
+  {
     path: '/mcp',
     name: 'MCP 管理',
     icon: 'ApiOutlined',
     component: './evolution/mcp',
   },
+  { path: '/mcp/:id', component: './evolution/mcp/detail', hideInMenu: true },
   {
     path: '/knowledge',
     name: '知识库管理',
     icon: 'DatabaseOutlined',
     component: './evolution/knowledge',
+  },
+  {
+    path: '/knowledge/:id',
+    component: './evolution/knowledge/detail',
+    hideInMenu: true,
   },
   {
     path: '/evaluation',
@@ -53,7 +64,11 @@ export default [
     icon: 'TeamOutlined',
     routes: [
       { path: '/settings', redirect: '/settings/members' },
-      { path: '/settings/members', name: '成员管理', component: './settings/members' },
+      {
+        path: '/settings/members',
+        name: '成员管理',
+        component: './settings/members',
+      },
     ],
   },
   { path: '/*', layout: false, component: './exception/404' },

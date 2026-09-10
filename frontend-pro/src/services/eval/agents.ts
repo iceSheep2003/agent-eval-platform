@@ -227,6 +227,33 @@ export const rollbackAgentVersion = (
     { method: 'POST', data: payload, ...withWorkspace(workspaceId) },
   );
 
+export type VersionMetrics = {
+  version_id: string;
+  origin: string;
+  trace_count: number;
+  success_rate: number | null;
+  p95_latency_ms: number | null;
+  average_cost_usd: number;
+};
+
+export type ShadowComparison = {
+  window_days: number;
+  min_samples: number;
+  candidate: VersionMetrics | null;
+  baseline: VersionMetrics | null;
+};
+
+/** 候选（shadow）vs 基线（production）的原始指标，用来解释晋级为什么被阻断。 */
+export const getShadowComparison = (
+  workspaceId: string,
+  agentId: string,
+  versionId: string,
+) =>
+  call<ShadowComparison>(
+    `/api/agents/${agentId}/versions/${versionId}/shadow-comparison`,
+    withWorkspace(workspaceId),
+  );
+
 export const getAgentPromotions = (workspaceId: string, agentId: string) =>
   call<{ items: Array<Record<string, unknown>> }>(
     `/api/agents/${agentId}/promotions`,

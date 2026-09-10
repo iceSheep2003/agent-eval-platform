@@ -135,6 +135,54 @@ export type RetrievalTestResult = {
   }>;
 };
 
+export type FeedbackCandidate = {
+  id: string;
+  trace_id: string;
+  reason: 'failure' | 'low_confidence' | 'user_feedback' | 'drift';
+  status: 'candidate' | 'accepted' | 'rejected';
+  created_at: string;
+};
+
+export type DeploymentGate = {
+  id: string;
+  name: string;
+  status: 'passed' | 'failed' | 'pending';
+  value?: number | null;
+  threshold?: number | null;
+  unit?: 'score' | 'percent' | 'ms' | 'count';
+  evidence_id?: string | null;
+  message?: string;
+};
+
+export type PromotionPreview = {
+  asset_id: string;
+  version_id: string;
+  version_label: string;
+  source_channel: ChannelName | null;
+  target_channel: ChannelName;
+  replacing_version_id: string | null;
+  replacing_version_label: string | null;
+  affected_agents: number;
+  gates: DeploymentGate[];
+  requires_approval: boolean;
+  can_promote: boolean;
+};
+
+export type CapabilityDeployment = {
+  id: string;
+  asset_id: string;
+  channel: ChannelName;
+  action: 'initial' | 'promote' | 'rollback';
+  from_version_id: string | null;
+  from_version_label: string | null;
+  to_version_id: string;
+  to_version_label: string;
+  reason: string | null;
+  evidence_ids: string[];
+  actor_id: string;
+  created_at: string;
+};
+
 export const listCapabilityAssets = (workspaceId: string, kind: CapabilityKind) =>
   call<{ items: CapabilityAsset[] }>('/api/v1/assets', {
     params: { kind },
@@ -211,6 +259,58 @@ export const promoteCapabilityVersion = (
 ) =>
   call<CapabilityAsset>(
     `/api/v1/assets/${assetId}/versions/${versionId}/promote`,
+    { method: 'POST', data: payload, ...withWorkspace(workspaceId) },
+  );
+
+export const getPromotionPreview = (
+  workspaceId: string,
+  assetId: string,
+  versionId: string,
+  targetChannel: ChannelName,
+) =>
+  call<PromotionPreview>(
+    `/api/v1/assets/${assetId}/versions/${versionId}/promotion-preview`,
+    { params: { target_channel: targetChannel }, ...withWorkspace(workspaceId) },
+  );
+
+export const listCapabilityDeployments = (
+  workspaceId: string,
+  assetId: string,
+  channel?: ChannelName,
+) =>
+  call<{ items: CapabilityDeployment[] }>(
+    `/api/v1/assets/${assetId}/deployments`,
+    { params: channel ? { channel } : undefined, ...withWorkspace(workspaceId) },
+  );
+
+export const rollbackCapabilityChannel = (
+  workspaceId: string,
+  assetId: string,
+  payload: { channel: ChannelName; target_version_id: string; reason: string },
+) =>
+  call<CapabilityAsset>(`/api/v1/assets/${assetId}/rollback`, {
+    method: 'POST',
+    data: payload,
+    ...withWorkspace(workspaceId),
+  });
+
+export const listFeedbackCandidates = (
+  workspaceId: string,
+  assetId: string,
+  params?: { channel?: ChannelName; status?: FeedbackCandidate['status'] },
+) =>
+  call<{ items: FeedbackCandidate[] }>(
+    `/api/v1/assets/${assetId}/feedback-candidates`,
+    { params, ...withWorkspace(workspaceId) },
+  );
+
+export const createIterationProposal = (
+  workspaceId: string,
+  assetId: string,
+  payload: { candidate_ids: string[]; title: string; target: 'new_version' | 'dataset' },
+) =>
+  call<{ proposal_id: string; status: 'draft' }>(
+    `/api/v1/assets/${assetId}/iteration-proposals`,
     { method: 'POST', data: payload, ...withWorkspace(workspaceId) },
   );
 

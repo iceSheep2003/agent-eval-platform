@@ -1,11 +1,50 @@
-"""可观测性契约 —— **当前为空**。
+"""可观测性契约。
 
-原本打算把 `Score` 放在这里（`ScoreWritePort`），实现时发现：Score 是 **Trial 的产物**，
-与 Run/Trial 同生命周期，由 execution 的评分引擎写入、execution 的固化流程读取。
-拆到 observability 会造成写读两端来回穿模块边界，收益为负。
+定义方：消费方（delivery 在 LIVESH→LIVE 晋级时要比对影子与基线的真实指标）。
+实现方：observability。
 
-因此 Score 归 execution（表 `run_score`），observability 只负责 Trace / Span
-这类**运行时事实**。等 trace 与 run 的关联打通、需要跨模块读 Score 时再在这里加端口。
-
-按契约生长规则 G3：没有消费方的契约项不进契约层。
+**Score 不在这里**：它是 Trial 的产物，与 Run/Trial 同生命周期，归 execution。
 """
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import Protocol, runtime_checkable
+
+from ..common import Id, TraceOrigin, Window
+
+
+@dataclass(frozen=True, slots=True)
+class VersionMetrics:
+    """某个**具体版本**在某个来源下的运行质量。
+
+    口径显式命名——`success_rate` 是调用成功率，不是任务完成率。
+    """
+
+    asset_version_id: Id
+    origin: TraceOrigin
+    trace_count: int
+    success_rate: float | None
+    p95_latency_ms: int | None
+    average_cost_usd: Decimal
+
+    @property
+    def has_samples(self) -> bool:
+        return self.trace_count > 0
+
+
+@runtime_checkable
+class VersionMetricsPort(Protocol):
+    """由 observability 实现；按「版本 + 来源」取指标。
+
+    影子验证要的正是这个切面：候选版本在 `shadow` 下的表现 vs LIVE 版本在
+    `production` 下的表现——不是同一个 Agent 的整体平均。
+    """
+
+    async def version_metrics(
+        self, asset_version_id: Id, origin: TraceOrigin, window: Window
+    ) -> VersionMetrics: ...
+
+
+__all__ = ["VersionMetrics", "VersionMetricsPort"]

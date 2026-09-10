@@ -286,6 +286,43 @@ class TraceRepository:
         for span in spans:
             self._session.add(self._span_row(span, trace_id=trace.id))
 
+    async def version_aggregate(
+        self, asset_version_id: str, origin: str, since: datetime
+    ) -> tuple[int, int, int, Decimal]:
+        """按**版本 + 来源**聚合。影子验证要比对的是版本级指标，不是 Agent 整体平均。"""
+        stmt = select(
+            func.count(),
+            func.sum(case((TraceRow.status == "success", 1), else_=0)),
+            func.sum(case((TraceRow.status == "error", 1), else_=0)),
+            func.sum(TraceRow.cost_usd),
+        ).where(
+            TraceRow.asset_version_id == asset_version_id,
+            TraceRow.origin == origin,
+            TraceRow.started_at >= since,
+        )
+        row = (await self._session.execute(stmt)).one()
+        return (
+            int(row[0] or 0),
+            int(row[1] or 0),
+            int(row[2] or 0),
+            Decimal(str(row[3] or 0)),
+        )
+
+    async def version_durations(
+        self, asset_version_id: str, origin: str, since: datetime
+    ) -> Sequence[int]:
+        stmt = select(TraceRow.started_at, TraceRow.ended_at).where(
+            TraceRow.asset_version_id == asset_version_id,
+            TraceRow.origin == origin,
+            TraceRow.started_at >= since,
+            TraceRow.ended_at.is_not(None),
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            int((ensure_aware(ended) - ensure_aware(started)).total_seconds() * 1000)
+            for started, ended in rows
+        ]
+
     async def aggregate(
         self, workspace_id: str, asset_id: str, since: datetime, tenant_ids: Sequence[str] | None
     ) -> tuple[int, int, int, Decimal]:
