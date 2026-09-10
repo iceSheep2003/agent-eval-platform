@@ -14,6 +14,7 @@ from ....contracts.errors import DomainError, Errors, PermissionDenied
 from ....contracts.identity import Permission, ResourceRef
 from ....schemas.response import list_response, ok
 from ..application.services import DeliveryService
+from ..application.checks import CHECK_SCHEMAS
 from ..domain.lifecycle import LifecyclePolicy
 from ..domain.models import Promotion, Rollback, ShadowRoute
 
@@ -330,6 +331,20 @@ async def get_lifecycle_policy(
     assert_permission(container, actor, Permission.ASSET_READ)
     policy = await service.policy_for(actor.workspace_id)
     return ok(policy.as_dict())
+
+
+@router.get("/lifecycle-policy/checks")
+async def list_lifecycle_checks(
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+) -> dict:
+    """可用的检查项与各自的参数 schema。
+
+    策略编辑器据此渲染表单——**前端不写死「影子验证有哪几个参数」**，
+    以后加检查项只改后端。
+    """
+    assert_permission(container, actor, Permission.ASSET_READ)
+    return list_response([schema.as_dict() for schema in CHECK_SCHEMAS.values()])
 
 
 @router.put("/lifecycle-policy")
