@@ -117,6 +117,22 @@ class RuntimeHandle:
     asset_version_id: Id
     endpoint: str | None = None
     ephemeral: bool = True
+    #: 执行面类型，由 Adapter 自己报（local / docker / kubernetes / remote_http）。
+    #: 用例层不该硬编码——否则上 k8s 要回头改用例。
+    runtime_type: str = "local"
+
+
+@dataclass(frozen=True, slots=True)
+class HealthResult:
+    """一次探活的结果。
+
+    `detail` 是给人看的——k8s 下可能是 "readiness probe 404"，
+    本地是 "句柄已不在册"。排查时要的是这句话，不是布尔值。
+    """
+
+    healthy: bool
+    latency_ms: int | None = None
+    detail: str | None = None
 
 
 @runtime_checkable
@@ -132,6 +148,15 @@ class RuntimePort(Protocol):
     def invoke_stream(
         self, handle: RuntimeHandle, payload: Mapping[str, Any], ctx: InvocationContext
     ) -> AsyncIterator[str]: ...
+
+    async def health(self, handle: RuntimeHandle) -> HealthResult:
+        """探活。
+
+        **这是 RuntimePort 而不是外挂的探测逻辑**——「怎么算活着」是执行面才知道的事：
+        本地沙箱查句柄在不在册，k8s 查 Pod readiness 或打 `/health`。
+        上 k8s 时只换 Adapter，调度与状态机不动。
+        """
+        ...
 
     async def teardown(self, handle: RuntimeHandle) -> None: ...
 
@@ -221,6 +246,7 @@ class EntrypointProbePort(Protocol):
 
 __all__ = [
     "ChannelInvocation",
+    "HealthResult",
     "InvocationContext",
     "RuntimeHandle",
     "RuntimePort",

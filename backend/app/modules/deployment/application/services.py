@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Sequence
 
 from ....contracts.asset import AssetQueryPort
@@ -18,6 +19,7 @@ from ....persistence.database import Database
 from ....shared.clock import Clock
 from ....shared.ids import new_id
 from ....contracts.execution import (
+    HealthResult,
     InvocationContext,
     RuntimeHandle,
     RuntimePort,
@@ -25,6 +27,7 @@ from ....contracts.execution import (
 )
 from ..domain.models import (
     ACTIVE_STATES,
+    SERVING_STATES,
     INSTANCE_CHANNELS,
     Instance,
     InstanceMachine,
@@ -47,11 +50,16 @@ class DeploymentService:
         clock: Clock,
         assets: AssetQueryPort,
         runtime: RuntimePort,
+        *,
+        health_interval_seconds: int = 30,
+        health_failure_threshold: int = 3,
     ) -> None:
         self._db = database
         self._clock = clock
         self._assets = assets
         self._runtime = runtime
+        self._interval = timedelta(seconds=health_interval_seconds)
+        self._failure_threshold = health_failure_threshold
 
     # -- 查询 ----------------------------------------------------------------
 
@@ -76,7 +84,64 @@ class DeploymentService:
             instance = await InstanceRepository(uow.session).get_by_channel(
                 asset_id, channel, workspace_id
             )
-        return _to_ref(instance) if instance and instance.is_running else None
+        # DEGRADED 不返回——不健康的实例必须被摘出流量，否则探活只是装饰
+        return _to_ref(instance) if instance and instance.is_serving else None
+
+    # -- 探活 ----------------------------------------------------------------
+
+    async def probe(self, instance_id: Id, workspace_id: Id) -> Instance:
+        """探活一次，按结果迁移状态。
+
+        成功 → 计数清零；若之前是 DEGRADED 则恢复到 RUNNING。
+        失败 → 累计计数，先降为 DEGRADED（摘出流量），超过阈值才 FAILED。
+        **不自动重启**：沉默的重试会掩盖真实故障。
+        """
+        instance = await self.get(instance_id, workspace_id)
+        if instance.state not in ACTIVE_STATES:
+            return instance  # 只有活跃实例需要探活
+
+        result: HealthResult = await self._runtime.health(_handle(instance))
+        now = self._clock.now()
+        failures = 0 if result.healthy else instance.consecutive_failures + 1
+        machine = InstanceMachine(state=instance.state)
+
+        if result.healthy:
+            # STARTING → RUNNING（首次探活）、DEGRADED → RUNNING（恢复）
+            machine.to(InstanceState.RUNNING)
+        elif failures >= self._failure_threshold:
+            machine.to(InstanceState.FAILED)
+        elif machine.state is InstanceState.RUNNING:
+            machine.to(InstanceState.DEGRADED)
+
+        async with UnitOfWork(self._db) as uow:
+            await InstanceRepository(uow.session).record_health(
+                instance.id,
+                state=machine.state,
+                failures=failures,
+                detail=result.detail,
+                checked_at=now,
+            )
+            await uow.commit()
+        return await self.get(instance_id, workspace_id)
+
+    async def probe_due(self) -> int:
+        """扫描所有到期的活跃实例并探活，返回探活数量。
+
+        **谁调用它决定调度形态**：现在由 Worker 的循环周期性调用；
+        上 k8s 后换成 CronJob 或独立的探活 Deployment 调同一个方法，
+        业务逻辑与状态机完全不动。
+        """
+        cutoff = self._clock.now() - self._interval
+        async with UnitOfWork(self._db) as uow:
+            due = await InstanceRepository(uow.session).list_due(cutoff)
+        probed = 0
+        for instance in due:
+            try:
+                await self.probe(instance.id, instance.workspace_id)
+                probed += 1
+            except Exception as exc:  # noqa: BLE001 - 单个实例探活失败不该中断整轮
+                logger.warning("实例探活异常 %s: %r", instance.id, exc)
+        return probed
 
     # -- 启停 ----------------------------------------------------------------
 
@@ -149,12 +214,16 @@ class DeploymentService:
                 Errors.RUN_STATE_CONFLICT, f"实例启动失败：{exc}", channel=channel.value
             ) from exc
 
-        machine.to(InstanceState.RUNNING)
+        # provision 返回 ≠ 已经能服务。本地沙箱几乎立刻可用，但 k8s 的 Pod
+        # 还要等 readiness——所以这里**不直接写 RUNNING**，而是立刻探一次活，
+        # 由观测结果决定。本地与 k8s 因此是同一条路径。
         await self._persist(
             existing, asset_id, version.id, channel, workspace_id, machine.state,
-            handle_id=handle.id, endpoint=handle.endpoint, started=True,
+            handle_id=handle.id, endpoint=handle.endpoint,
+            runtime_type=handle.runtime_type, started=True,
         )
-        return await self._get_by_channel(asset_id, channel, workspace_id)
+        return await self.probe(instance_id=await self._instance_id(asset_id, channel, workspace_id),
+                                workspace_id=workspace_id)
 
     async def stop(self, *, instance_id: Id, workspace_id: Id, actor_id: Id) -> Instance:
         instance = await self.get(instance_id, workspace_id)
@@ -202,6 +271,7 @@ class DeploymentService:
         handle_id: str | None = None,
         endpoint: str | None = None,
         error: str | None = None,
+        runtime_type: str = "local",
         started: bool = False,
     ) -> None:
         now = self._clock.now()
@@ -212,7 +282,7 @@ class DeploymentService:
                 asset_id=asset_id,
                 asset_version_id=version_id,
                 channel=channel,
-                runtime_type="local",
+                runtime_type=runtime_type,
                 state=state,
                 handle_id=handle_id,
                 endpoint=endpoint,
@@ -241,6 +311,9 @@ class DeploymentService:
                 stopped_at=self._clock.now() if stopped else instance.stopped_at,
             )
             await uow.commit()
+
+    async def _instance_id(self, asset_id: Id, channel: Channel, workspace_id: Id) -> Id:
+        return (await self._get_by_channel(asset_id, channel, workspace_id)).id
 
     async def _get_by_channel(
         self, asset_id: Id, channel: Channel, workspace_id: Id

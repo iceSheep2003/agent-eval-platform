@@ -104,6 +104,16 @@ class TaskProtocol(StrEnum):
 **不要重新实现 benchmark**。已有的适配工作（各 benchmark 的 dataset / environment / verifier）
 应该被**引用**，而不是被平台重写。数据集只负责回答「这批样本是哪来的、怎么转成平台能跑的」。
 
+接入时必须先分类，不强求所有 benchmark 实现同一级别的协议：
+
+1. `direct`：静态 QA/分类数据只走字段映射和通用评估器。
+2. `verifier`：例如 SWE-bench，保留原生测试程序与镜像判分。
+3. `interactive`：例如 tau2、Terminal-Bench、BrowserGym，才需要完整
+   `benchmark-adapter/v1` 环境生命周期。
+
+接口返回的 `compatible / importable / runnable` 是三个独立事实。「协议兼容」
+不等于「数据已存在」，更不等于「执行环境已就绪」。
+
 ```python
 class DatasetSource:
     """来源与适配信息。benchmark 数据集必须能回答「原始是哪一版、用哪个适配器」。"""

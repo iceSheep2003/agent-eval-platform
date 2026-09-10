@@ -15,7 +15,7 @@ import logging
 import time
 from typing import Any, AsyncIterator, Callable, Mapping
 
-from ..contracts.execution import EntrypointReport
+from ..contracts.execution import EntrypointReport, HealthResult
 from ..modules.execution.application.ports import (
     InvocationContext,
     InvokeResult,
@@ -179,18 +179,37 @@ def _resolve(entrypoint: str) -> Callable[..., Any]:
 
 
 class LocalSandboxRuntime:
-    """满足 `execution.application.ports.RuntimePort`。"""
+    """满足 `contracts.execution.RuntimePort`。
+
+    它维护一份**在册句柄**。探活就查这个——如果句柄被 teardown 了、
+    实例记录却还写着 running，说明状态漂移了，探活要能发现。
+    """
+
+    def __init__(self) -> None:
+        self._live: dict[str, float] = {}
+
+    async def health(self, handle: RuntimeHandle) -> HealthResult:
+        started = time.perf_counter()
+        alive = handle.id in self._live
+        return HealthResult(
+            healthy=alive,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            detail=None if alive else "句柄不在册（可能已被 teardown 或进程重启）",
+        )
 
     async def provision(self, spec: RuntimeSpec, ctx: InvocationContext) -> RuntimeHandle:
         if not spec.entrypoint:
             raise EntrypointError(
                 f"版本 {spec.asset_version_id} 没有 entrypoint，本地沙箱无法启动"
             )
-        return RuntimeHandle(
+        handle = RuntimeHandle(
             id=f"local:{spec.asset_version_id}",
             asset_version_id=spec.asset_version_id,
             ephemeral=True,
+            runtime_type="local",
         )
+        self._live[handle.id] = time.monotonic()
+        return handle
 
     async def invoke(
         self, handle: RuntimeHandle, payload: Mapping[str, Any], ctx: InvocationContext
@@ -297,4 +316,4 @@ class LocalSandboxRuntime:
         )
 
     async def teardown(self, handle: RuntimeHandle) -> None:
-        return None
+        self._live.pop(handle.id, None)

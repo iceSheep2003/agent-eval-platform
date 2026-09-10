@@ -221,3 +221,73 @@ async def _promotion_scenario(tmp_path) -> None:
 def test_promotion_to_livesh_does_not_start_instance(tmp_path) -> None:
     """LIVESH 手动：影子什么时候开始接流量由人决定。"""
     asyncio.run(_promotion_scenario(tmp_path))
+
+
+async def _health_scenario(tmp_path) -> None:
+    """探活：失败先摘流量，连续失败到阈值才判死。"""
+    clock = FixedClock()
+    container = _container(tmp_path, clock)
+    await container.startup()
+    try:
+        seeded = await seed(container)
+        workspace_id = seeded["workspace_id"]
+        owner = seeded["admin"]
+        deployments = container.deployments
+        agent, version = await _agent(container, workspace_id, owner)
+        await _bind(container, agent, version, Channel.LIVE, workspace_id, owner)
+        instance = await deployments.start(
+            asset_id=agent.id, channel=Channel.LIVE,
+            workspace_id=workspace_id, actor_id=owner,
+        )
+
+        # -- 健康时：running，计数清零 -------------------------------------
+        probed = await deployments.probe(instance.id, workspace_id)
+        assert probed.state is InstanceState.RUNNING
+        assert probed.consecutive_failures == 0
+        assert probed.last_health_at is not None
+
+        # -- 模拟故障：把句柄从执行面摘掉（等价于进程重启/容器消失）---------
+        await container.deployments._runtime.teardown(  # noqa: SLF001 - 模拟执行面故障
+            _handle_of(instance, container)
+        )
+
+        first = await deployments.probe(instance.id, workspace_id)
+        assert first.state is InstanceState.DEGRADED
+        assert first.consecutive_failures == 1
+        assert first.last_health_error
+
+        # DEGRADED **不再接流量**——否则探活只是装饰
+        assert await deployments.running_for(agent.id, Channel.LIVE, workspace_id) is None
+        with pytest.raises(DomainError) as down:
+            await container.invoke.invoke_channel(
+                ChannelInvocation(
+                    workspace_id=workspace_id, asset_id=agent.id,
+                    channel=Channel.LIVE, input="ping",
+                )
+            )
+        assert down.value.code == "run_state_conflict"
+
+        # -- 连续失败到阈值 → failed，仍然不自动重启 ------------------------
+        await deployments.probe(instance.id, workspace_id)
+        final = await deployments.probe(instance.id, workspace_id)
+        assert final.state is InstanceState.FAILED
+        assert final.consecutive_failures >= 3
+
+        # -- probe_due 跨工作区扫描，但不碰非活跃实例 -----------------------
+        assert await deployments.probe_due() == 0
+    finally:
+        await container.shutdown()
+
+
+def _handle_of(instance, container):
+    from backend.app.contracts.execution import RuntimeHandle
+
+    return RuntimeHandle(
+        id=instance.handle_id or instance.id,
+        asset_version_id=instance.asset_version_id,
+        endpoint=instance.endpoint,
+    )
+
+
+def test_instance_health_probe(tmp_path) -> None:
+    asyncio.run(_health_scenario(tmp_path))

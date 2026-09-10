@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....contracts.common import Channel
 from ....shared.clock import ensure_aware
-from ..domain.models import Instance, InstanceState
+from ..domain.models import ACTIVE_STATES, Instance, InstanceState
 from .tables import InstanceRow
 
 
@@ -30,6 +30,8 @@ def _instance(row: InstanceRow) -> Instance:
         stopped_at=ensure_aware(row.stopped_at) if row.stopped_at else None,
         last_health_at=ensure_aware(row.last_health_at) if row.last_health_at else None,
         created_at=ensure_aware(row.created_at),
+        consecutive_failures=int(row.consecutive_failures or 0),
+        last_health_error=row.last_health_error,
     )
 
 
@@ -63,6 +65,43 @@ class InstanceRepository:
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_instance(row) for row in rows]
+
+    async def list_due(self, before: datetime, limit: int = 200) -> Sequence[Instance]:
+        """到期待探活的实例：处于活跃状态，且上次探活早于 `before`（或从未探过）。
+
+        跨工作区扫描——探活是平台自身的运维行为，不是某个工作区的操作。
+        """
+        stmt = (
+            select(InstanceRow)
+            .where(
+                InstanceRow.state.in_([item.value for item in ACTIVE_STATES]),
+                (InstanceRow.last_health_at.is_(None)) | (InstanceRow.last_health_at < before),
+            )
+            .order_by(InstanceRow.last_health_at.asc().nulls_first())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_instance(row) for row in rows]
+
+    async def record_health(
+        self,
+        instance_id: str,
+        *,
+        state: InstanceState,
+        failures: int,
+        detail: str | None,
+        checked_at: datetime,
+    ) -> None:
+        await self._session.execute(
+            update(InstanceRow)
+            .where(InstanceRow.id == instance_id)
+            .values(
+                state=state.value,
+                consecutive_failures=failures,
+                last_health_error=None if failures == 0 else detail,
+                last_health_at=checked_at,
+            )
+        )
 
     async def upsert(
         self,

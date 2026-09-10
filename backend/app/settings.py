@@ -59,6 +59,11 @@ class Settings:
     # 认证
     require_sso: bool = False
 
+    # 运行实例探活
+    health_interval_seconds: int = 30
+    #: 连续失败到这个次数才判死。单次抖动不该立刻摘流量。
+    health_failure_threshold: int = 3
+
     # 上传
     max_ingest_events: int = 1000
     max_ingest_bytes: int = 5 * 1024 * 1024
@@ -109,6 +114,8 @@ class Settings:
             portal_session_hours=_int_env("EVAL_LOOM_PORTAL_SESSION_HOURS", 24),
             csrf_enabled=_bool_env("EVAL_LOOM_CSRF_ENABLED", True),
             require_sso=_bool_env("AUTH_REQUIRE_SSO", False),
+            health_interval_seconds=_int_env("EVAL_LOOM_HEALTH_INTERVAL_SECONDS", 30),
+            health_failure_threshold=_int_env("EVAL_LOOM_HEALTH_FAILURE_THRESHOLD", 3),
             command_lease_seconds=_int_env("EVAL_LOOM_COMMAND_LEASE_SECONDS", 60),
             command_max_attempts=_int_env("EVAL_LOOM_COMMAND_MAX_ATTEMPTS", 5),
             log_format=os.getenv("EVAL_LOOM_LOG_FORMAT", "console").strip().lower(),

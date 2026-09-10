@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ....persistence.base import Base, TimestampMixin
@@ -33,3 +33,6 @@ class InstanceRow(Base, TimestampMixin):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_health_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: 连续探活失败次数。成功一次即清零。
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_health_error: Mapped[str | None] = mapped_column(Text, nullable=True)

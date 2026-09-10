@@ -53,6 +53,7 @@
 | `EVAL_LOOM_DATA_DIR` | `.data/eval-loom` | 不依赖（对象存储接管） |
 | `EVAL_LOOM_CORS_ORIGINS` | localhost 若干 | 控制台域名 |
 | `RUNTIME_BACKEND` | `local` | `kubernetes` |
+| `EVAL_LOOM_BENCHMARK_DATA_ROOT` | `<data_dir>/benchmarks` | Debian 上的只读 benchmark 挂载目录 |
 
 **禁止**：在代码里写死域名、路径、端口；从文件读密钥；依赖本地磁盘保存业务状态。
 
@@ -188,3 +189,59 @@ P0 用进程内订阅者即可；跨进程时同一张表由 worker 的派发循
 - [ ] readiness 探针打 `/api/health`，liveness 打 `/api/live`
 - [ ] 日志输出结构化 JSON 到 stdout（由 `EVAL_LOOM_LOG_FORMAT=json` 控制）
 - [ ] worker 用队列深度扩容；确认租约时长 > 单条命令最长执行时间
+
+---
+
+## 7. 运行实例：与发布通道分开，以及 k8s 迁移
+
+### 7.1 两条生命周期
+
+```
+发布通道  test / liversh / live                       改的是「用哪个版本」
+运行实例  stopped/starting/running/degraded/stopping/failed   改的是「跑没跑起来」
+```
+
+**冻结版本不启动，晋级也不启动**（LIVE 除外：发布即生效）。
+启动的前提是该通道已绑定版本；TEST 不设常驻实例，调试走临时沙箱。
+
+`DEGRADED` 对标 k8s 的 Running-but-NotReady：**活着但不接流量**。
+探活失败先降级（单次抖动不该立刻判死），连续失败到阈值才 `FAILED`，且**不自动重启**。
+
+### 7.2 k8s 时不用改的（已经解耦）
+
+| 位置 | 为什么不用改 |
+| --- | --- |
+| `RuntimePort.health()` | 「怎么算活着」是执行面的知识。本地查句柄，k8s 查 Pod readiness 或打 `/health` |
+| `InstanceMachine` 状态机 | 不感知任何运行时 |
+| `probe_due()` 的业务逻辑 | **调度点与逻辑分离**：现在由 Worker 循环调，k8s 换 CronJob 调同一个方法 |
+| `runtime_type` | 由 Adapter 自报，用例层不再硬编码 `"local"` |
+| 启动路径 | provision 只到 `STARTING`，探活通过才 `RUNNING` —— 本地与 k8s 走同一条路 |
+
+### 7.3 k8s 时要改的
+
+| 位置 | 现在 | 换成 |
+| --- | --- | --- |
+| Runtime Adapter | `LocalSandboxRuntime` | `KubernetesRuntime`（Deployment + Service，读 readinessProbe） |
+| 探活调度 | Worker 的循环 | CronJob 或独立 Deployment |
+| 句柄 | 进程内 id | `namespace/name` |
+| `RUNTIME_BACKEND` | `local` | `kubernetes` |
+
+### 7.4 **还存在的耦合**（明确记下，别等到迁移时才发现）
+
+1. **`LocalSandboxRuntime._live` 是进程内字典。** 多个 worker 副本各持一份，探活结果会不一致。
+   本地单进程无所谓，但**这条本身就说明本地实现不能当生产用**。
+   k8s Adapter 不存在这个问题——它问的是 API，不是自己的内存。
+
+2. **期望态与观测态没有分开。** `stop()` 是「直接把 state 写成 STOPPED」，
+   而不是「写期望 → 等观测确认」。单副本、人工操作足够；
+   但要自动调谐（副本数、自愈）时必须拆成 `desired_state` + `observed_state`。
+
+3. **实例状态存在我们自己的库里。** k8s 下 Pod 才是真相，
+   必须周期性 reconcile 否则会漂移。现在的 `probe_due()` 就是这个 reconcile 的雏形——
+   它做的是「拿执行面的观测覆盖我们的记录」，方向是对的。
+
+4. **`Consecutive_failures` 存在我们的库里。** 多进程同时探活会有竞态。
+   现在只有一个探活者（Worker），够用；多探活者时要改成带版本号的乐观并发。
+
+> 判断标准仍然是 §1 那条：**迁移时如果需要改 `domain/` 或 `application/`，说明抽象漏了。**
+> 上面 4 条里，1 在 `runtime_adapters/`、2 和 3 在 `application/`——2 和 3 属于后者，要注意。

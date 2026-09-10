@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 IDLE_SLEEP_SECONDS = 1.0
 LEASE_REAP_INTERVAL_SECONDS = 30.0
+#: 运行实例探活的扫描间隔。实际节奏由 `Settings.health_interval_seconds` 决定，
+#: 这里只是「多久看一眼有没有到期的」。
+PROBE_SCAN_INTERVAL_SECONDS = 10.0
 
 
 class CommandHandler(Protocol):
@@ -93,14 +96,25 @@ class Worker:
 
     async def run_forever(self) -> None:
         last_reap = 0.0
+        last_probe = 0.0
         while not self._stopping:
             loop = asyncio.get_running_loop()
             now = loop.time()
+
             if now - last_reap >= LEASE_REAP_INTERVAL_SECONDS:
                 reclaimed = await self._container.command_queue.release_expired_leases()
                 if reclaimed:
                     logger.warning("回收了 %d 条租约过期的命令", reclaimed)
                 last_reap = now
+
+            # 运行实例探活。**这里是调度点，不是逻辑实现**——探活本身在
+            # DeploymentService.probe_due()。上 k8s 后把这一行换成 CronJob 即可，
+            # 业务逻辑与状态机不动。
+            if now - last_probe >= PROBE_SCAN_INTERVAL_SECONDS:
+                probed = await self._container.deployments.probe_due()
+                if probed:
+                    logger.info("探活了 %d 个运行实例", probed)
+                last_probe = now
 
             processed = await self.run_once()
             if processed == 0:

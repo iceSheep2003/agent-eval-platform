@@ -101,7 +101,14 @@ class Container:
         traces = TraceService(database, resolved_clock, assets, attributions=assets)
         # 运行实例：与发布通道是两条独立生命周期。冻结版本/晋级都不启动实例，
         # 只有显式 start（或晋级到 LIVE）才拉起来。
-        deployments = DeploymentService(database, resolved_clock, assets, sandbox)
+        deployments = DeploymentService(
+            database,
+            resolved_clock,
+            assets,
+            sandbox,
+            health_interval_seconds=resolved.health_interval_seconds,
+            health_failure_threshold=resolved.health_failure_threshold,
+        )
         # delivery 多了 traces——LIVESH→LIVE 晋级要比对影子与基线的真实指标；
         # 以及 deployments——晋级到 LIVE 时自动拉起实例（发布即生效）
         delivery = DeliveryService(
