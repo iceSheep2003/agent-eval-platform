@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any, Awaitable, Callable, Literal, Mapping
 
 from ....contracts.asset import AssetQueryPort
 from ....contracts.common import Channel, EvaluationStage, Id, TraceOrigin, Window
@@ -159,6 +159,85 @@ async def shadow_verification(ctx: CheckContext) -> CheckOutcome:
     return CheckOutcome.ok(rule_name)
 
 
+@dataclass(frozen=True, slots=True)
+class ParamSpec:
+    """一个检查参数的描述。前端据此渲染表单——加检查项不用改界面。"""
+
+    key: str
+    label: str
+    type: Literal["number", "select", "text"]
+    default: Any
+    options: tuple[str, ...] = ()
+    step: float | None = None
+    help: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "label": self.label,
+            "type": self.type,
+            "default": self.default,
+            "options": list(self.options),
+            "step": self.step,
+            "help": self.help,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CheckSchema:
+    name: CheckName
+    label: str
+    description: str
+    params: tuple[ParamSpec, ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name.value,
+            "label": self.label,
+            "description": self.description,
+            "params": [item.as_dict() for item in self.params],
+        }
+
+
+#: 检查项的自描述。策略编辑器读它来渲染表单，**不用在前端写死参数**。
+CHECK_SCHEMAS: Mapping[CheckName, CheckSchema] = {
+    CheckName.PROMOTION_GATE: CheckSchema(
+        name=CheckName.PROMOTION_GATE,
+        label="发布门禁",
+        description="必须有该版本一次「指定阶段 + 已完成 + 判定通过」的运行",
+        params=(
+            ParamSpec(
+                key="stage",
+                label="评测阶段",
+                type="select",
+                default=EvaluationStage.RELEASE.value,
+                options=tuple(item.value for item in EvaluationStage),
+                help="只认这个阶段的结果——开发验证的宽松样本不能拿来放行",
+            ),
+        ),
+    ),
+    CheckName.SHADOW_ROUTE: CheckSchema(
+        name=CheckName.SHADOW_ROUTE,
+        label="影子路由已配置",
+        description="影子路由必须启用，且候选版本就是本次要晋级的版本",
+    ),
+    CheckName.SHADOW_VERIFICATION: CheckSchema(
+        name=CheckName.SHADOW_VERIFICATION,
+        label="影子验证不劣于基线",
+        description="候选在真实流量分布下的表现不得明显差于当前 LIVE 版本",
+        params=(
+            ParamSpec(key="window_days", label="观察窗口（天）", type="number", default=7),
+            ParamSpec(key="min_samples", label="最少影子样本", type="number", default=30,
+                      help="样本不足时不给结论，避免小样本抖动误伤发布"),
+            ParamSpec(key="success_rate_tolerance", label="成功率容差", type="number",
+                      default=0.02, step=0.01, help="允许比基线低多少（0.02 = 2 个百分点）"),
+            ParamSpec(key="latency_tolerance", label="P95 延迟容差", type="number",
+                      default=0.20, step=0.05, help="允许比基线高多少（0.20 = 20%）"),
+        ),
+    ),
+}
+
+
 CHECKS: Mapping[CheckName, CheckFn] = {
     CheckName.PROMOTION_GATE: promotion_gate,
     CheckName.SHADOW_ROUTE: shadow_route,
@@ -175,6 +254,9 @@ def check_for(name: CheckName) -> CheckFn:
 
 __all__ = [
     "CHECKS",
+    "CHECK_SCHEMAS",
+    "CheckSchema",
+    "ParamSpec",
     "CheckContext",
     "CheckFn",
     "CheckOutcome",

@@ -159,3 +159,34 @@ def test_current_channel_is_the_highest_one() -> None:
 def test_current_channel_is_none_when_unbound() -> None:
     bindings = {channel: None for channel in CHANNELS_ASCENDING}
     assert current_channel("ver_1", bindings) is None
+
+
+def test_every_check_has_implementation_and_schema() -> None:
+    """检查项的三份声明必须一一对应。
+
+    漏一份的后果各不相同：缺实现 → 跑到时才炸；缺 schema → 策略编辑器渲染不出表单，
+    用户以为「这项没有参数」。所以在这里一次性锁住。
+    """
+    from backend.app.modules.delivery.application.checks import CHECKS, CHECK_SCHEMAS
+
+    assert set(CHECK_SCHEMAS) == set(CheckName), "有检查项没写 schema"
+    assert set(CHECKS) == set(CheckName), "有检查项没写实现"
+    # 默认策略里引用的检查项都得存在
+    for transition in DEFAULT_POLICY.transitions:
+        for spec in transition.checks:
+            assert spec.name in CHECKS
+
+
+def test_schema_params_match_what_checks_read() -> None:
+    """schema 里声明的参数，就是检查实现真正会读的那些。"""
+    from backend.app.modules.delivery.application.checks import CHECK_SCHEMAS
+
+    declared = {param.key for param in CHECK_SCHEMAS[CheckName.SHADOW_VERIFICATION].params}
+    assert declared == {
+        "window_days",
+        "min_samples",
+        "success_rate_tolerance",
+        "latency_tolerance",
+    }
+    gate = {param.key for param in CHECK_SCHEMAS[CheckName.PROMOTION_GATE].params}
+    assert gate == {"stage"}
