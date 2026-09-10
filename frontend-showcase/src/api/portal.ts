@@ -1,7 +1,7 @@
 import { http, requestList } from './client';
 
-/** 后端 `Channel` 枚举的线值。注意影子通道是 `livesh`，不是 `liveshadow`。 */
-export type ChannelValue = 'test' | 'livesh' | 'live';
+/** 展示平台只开放 TEST / LIVE；影子通道不对外。 */
+export type ChannelValue = 'test' | 'live';
 
 export interface PortalUser {
   id: string;
@@ -22,8 +22,6 @@ export interface PortalHub {
 export interface PortalChannel {
   channel: ChannelValue;
   label: string;
-  /** 影子通道的提示语；其它通道为 null。 */
-  notice: string | null;
   bound: boolean;
   version_id: string | null;
   version_label: string | null;

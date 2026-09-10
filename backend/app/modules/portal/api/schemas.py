@@ -42,8 +42,6 @@ class PortalSessionDTO(BaseModel):
 class ChannelViewDTO(BaseModel):
     channel: Literal["test", "livesh", "live"]
     label: str
-    #: 影子通道的提示语；其它通道为 null。
-    notice: str | None = None
     bound: bool
     version_id: str | None = None
     version_label: str | None = None

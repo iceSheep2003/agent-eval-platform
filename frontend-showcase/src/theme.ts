@@ -17,9 +17,8 @@ export const theme: ThemeConfig = {
   },
 };
 
-/** 通道配色：TEST 中性、LIVESH 警示、LIVE 肯定。 */
+/** 通道配色：TEST 中性、LIVE 肯定。 */
 export const CHANNEL_COLOR: Record<string, string> = {
   test: '#64748b',
-  livesh: '#d48806',
   live: '#15803d',
 };

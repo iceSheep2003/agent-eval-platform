@@ -50,13 +50,14 @@ _ROLES: frozenset[str] = frozenset({"owner", "member"})
 
 logger = logging.getLogger(__name__)
 
-#: 影子通道的回复必须让用户一眼看出「这不是给真实用户的结果」。
-SHADOW_NOTICE = "影子预览 · 未返回真实用户"
+#: 展示平台开放的通道。**不含 LIVESH**：影子通道是「复制生产流量给候选版本、
+#: 输出不返回给用户」的验证手段，让外部访客跟它对话在语义上就不成立。
+#: 影子验证仍然存在，只是留在平台侧做晋级比对，不对展示平台开放。
+PORTAL_CHANNELS: tuple[Channel, ...] = (Channel.TEST, Channel.LIVE)
 
-#: 三个通道的展示文案。顺序即前端切换器的顺序。
+#: 展示文案。顺序即前端切换器的顺序。
 CHANNEL_LABELS: Mapping[Channel, str] = {
     Channel.TEST: "测试",
-    Channel.LIVESH: "影子预览",
     Channel.LIVE: "生产",
 }
 
@@ -81,7 +82,6 @@ class ChannelView:
 
     channel: Channel
     label: str
-    notice: str | None
     bound: bool
     version_id: Id | None
     version_label: str | None
@@ -507,7 +507,7 @@ class PortalService:
         asset = await self._assets.get_asset(row.asset_id, workspace_id)
         by_channel = {item.channel: item for item in bindings}
         views: list[ChannelView] = []
-        for channel in Channel:
+        for channel in PORTAL_CHANNELS:
             version = await self._assets.version_of_channel(
                 row.asset_id, channel, workspace_id
             )
@@ -515,7 +515,6 @@ class PortalService:
                 ChannelView(
                     channel=channel,
                     label=CHANNEL_LABELS[channel],
-                    notice=SHADOW_NOTICE if channel is Channel.LIVESH else None,
                     bound=version is not None,
                     version_id=version.id if version else None,
                     version_label=version.version_label if version else None,
@@ -545,6 +544,12 @@ class PortalService:
         timeout_seconds: float = 60.0,
     ) -> InvokeResult:
         """按通道打一次。**版本由通道解析**，调用方给不了版本号。"""
+        if channel not in PORTAL_CHANNELS:
+            raise DomainError(
+                Errors.NOT_FOUND,
+                f"展示平台不开放 {channel.value} 通道",
+                channel=channel.value,
+            )
         async with UnitOfWork(self._db) as uow:
             row = await HubAgentRepository(uow.session).get(hub_agent_id)
             if row is None or row.hub_id != hub_id:
@@ -609,5 +614,5 @@ __all__ = [
     "PortalRateLimiter",
     "PortalService",
     "HubView",
-    "SHADOW_NOTICE",
+    "PORTAL_CHANNELS",
 ]

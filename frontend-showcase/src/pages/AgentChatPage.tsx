@@ -1,12 +1,19 @@
-import { ArrowLeftOutlined, RobotOutlined, UserOutlined } from '@ant-design/icons';
+import { RobotOutlined, UserOutlined } from '@ant-design/icons';
 import { Bubble, Sender, XProvider } from '@ant-design/x';
 import type { BubbleItemType, BubbleListProps } from '@ant-design/x/es/bubble/interface';
 import XMarkdown from '@ant-design/x-markdown';
 import { OpenAIChatProvider, useXChat, XRequest } from '@ant-design/x-sdk';
-import { Alert, Avatar, Segmented, Space, Spin, Tag, Typography } from 'antd';
+import { Alert, Avatar, Breadcrumb, Segmented, Space, Spin, Tag, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { chatUrl, getAgent, type ChannelValue, type PortalAgent } from '../api/portal';
+import {
+  chatUrl,
+  getAgent,
+  getHub,
+  type ChannelValue,
+  type PortalAgent,
+  type PortalHub,
+} from '../api/portal';
 import { CHANNEL_COLOR } from '../theme';
 
 interface ChatMessage {
@@ -27,6 +34,7 @@ const roleConfig: BubbleListProps['role'] = {
 
 export default function AgentChatPage() {
   const { hubId = '', agentId = '' } = useParams();
+  const [hub, setHub] = useState<PortalHub | null>(null);
   const [agent, setAgent] = useState<PortalAgent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,13 +44,14 @@ export default function AgentChatPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    getAgent(hubId, agentId)
-      .then((next) => {
+    Promise.all([getHub(hubId), getAgent(hubId, agentId)])
+      .then(([nextHub, nextAgent]) => {
         if (cancelled) return;
-        setAgent(next);
+        setHub(nextHub);
+        setAgent(nextAgent);
         // 默认落在第一个已绑定的通道上，避免一进来就是「未绑定」的空态
-        const firstBound = next.channels.find((item) => item.bound);
-        setChannel(firstBound?.channel ?? next.channels[0]?.channel ?? 'live');
+        const firstBound = nextAgent.channels.find((item) => item.bound);
+        setChannel(firstBound?.channel ?? nextAgent.channels[0]?.channel ?? 'live');
         setError(null);
       })
       .catch((err: Error) => {
@@ -102,56 +111,51 @@ export default function AgentChatPage() {
   }
 
   return (
-    <div className="page chat-page">
-      <Link to={`/hubs/${hubId}`} className="back-link">
-        <ArrowLeftOutlined /> 返回 Agent 列表
-      </Link>
-
-      <Space align="center" style={{ marginTop: 12, marginBottom: 8 }} wrap>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          {agent?.display_name ?? 'Agent'}
-        </Typography.Title>
-        <Tag color={CHANNEL_COLOR[channel]}>{channel.toUpperCase()}</Tag>
-        {activeChannel?.version_label && (
-          <Typography.Text type="secondary">版本 {activeChannel.version_label}</Typography.Text>
-        )}
-      </Space>
-
-      <Segmented<ChannelValue>
-        value={channel}
-        onChange={setChannel}
-        options={(agent?.channels ?? []).map((item) => ({
-          label: (
-            <span>
-              {item.channel.toUpperCase()} · {item.label}
-              {!item.bound && ' （未绑定）'}
-            </span>
-          ),
-          value: item.channel,
-        }))}
-      />
-
-      {activeChannel?.notice && (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginTop: 12 }}
-          message={activeChannel.notice}
-          description="这是影子通道的候选版本，输出仅供对比参考，不会返回给真实用户。"
+    <div className="chat-page">
+      <div className="chat-head">
+        <div className="chat-head-left">
+          <Breadcrumb
+            items={[{ title: <Link to="/">{hub?.name ?? '门户'}</Link> }, { title: hub?.slug }]}
+          />
+          <Space align="center" size={10} style={{ marginTop: 6 }} wrap>
+            <Typography.Title level={4} style={{ margin: 0 }}>
+              {agent?.display_name ?? 'Agent'}
+            </Typography.Title>
+            <Tag color={CHANNEL_COLOR[channel]}>{channel.toUpperCase()}</Tag>
+            {activeChannel?.version_label && (
+              <Typography.Text type="secondary">
+                版本 {activeChannel.version_label}
+              </Typography.Text>
+            )}
+          </Space>
+        </div>
+        <Segmented<ChannelValue>
+          value={channel}
+          onChange={setChannel}
+          options={(agent?.channels ?? []).map((item) => ({
+            label: (
+              <span>
+                {item.channel.toUpperCase()} · {item.label}
+                {!item.bound && ' （未绑定）'}
+              </span>
+            ),
+            value: item.channel,
+          }))}
         />
-      )}
-      {error && <Alert type="error" showIcon message={error} style={{ marginTop: 12 }} />}
+      </div>
+
+      {error && <Alert type="error" showIcon message={error} style={{ margin: '12px 0' }} />}
       {!bound && !error && (
         <Alert
           type="info"
           showIcon
-          style={{ marginTop: 12 }}
+          style={{ margin: '12px 0' }}
           message="该通道还没有绑定版本，暂时无法对话"
         />
       )}
 
-      <div className="chat-body">
-        <XProvider>
+      <XProvider>
+        <div className="chat-body">
           <div className="chat-messages">
             {bubbleItems.length === 0 ? (
               <div className="chat-empty">
@@ -177,8 +181,8 @@ export default function AgentChatPage() {
             placeholder={bound ? '输入消息，按 Enter 发送' : '该通道未绑定版本'}
             autoSize={{ minRows: 2, maxRows: 6 }}
           />
-        </XProvider>
-      </div>
+        </div>
+      </XProvider>
     </div>
   );
 }

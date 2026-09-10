@@ -29,7 +29,6 @@ from ..application.services import (
     CHAT_LIMIT_PER_MINUTE,
     PortalService,
     HubView,
-    SHADOW_NOTICE,
 )
 from .deps import (
     PortalActor,
@@ -89,7 +88,6 @@ def _agent_dto(view: AgentView) -> PortalAgentDTO:
             ChannelViewDTO(
                 channel=item.channel.value,
                 label=item.label,
-                notice=item.notice,
                 bound=item.bound,
                 version_id=item.version_id,
                 version_label=item.version_label,
@@ -326,7 +324,6 @@ async def portal_chat(
                 "object": "chat.completion",
                 "model": model,
                 "channel": channel.value,
-                "notice": SHADOW_NOTICE if channel is Channel.LIVESH else None,
                 "choices": [
                     {
                         "index": 0,
@@ -410,10 +407,6 @@ async def portal_chat(
         "X-Accel-Buffering": "no",
         "X-Eval-Loom-Channel": channel.value,
     }
-    if channel is Channel.LIVESH:
-        # HTTP 头只能是 ASCII，所以这里放**机器可读的标记**；
-        # 人话提示在 `channels[].notice` 与响应体里（见 SHADOW_NOTICE）。
-        headers["X-Eval-Loom-Notice"] = "shadow-preview"
     return StreamingResponse(
         stream(), media_type="text/event-stream; charset=utf-8", headers=headers
     )

@@ -152,22 +152,14 @@ async def _scenario(tmp_path) -> None:
             )
             assert wired.status_code == 200, wired.text
 
-            # 影子通道也配一把密钥，绑到影子版本
+            # 影子通道**刻意不配**：展示平台不开放它，配了也不会出现在列表里。
+            # 这里把影子版本绑到 LIVESH，正是为了证明它被挡住。
             await container.assets.bind_channel(
                 asset_id=agent.id,
                 channel=Channel.LIVESH,
                 version_id=shadow.id,
                 workspace_id=workspace_id,
                 actor_id=owner,
-            )
-            shadow_key = await client.post(
-                f"/api/agents/{agent.id}/deployment-keys",
-                json={"channel": "livesh"},
-            )
-            shadow_credential_id = shadow_key.json()["data"]["id"]
-            await client.post(
-                f"/api/portal-admin/agents/{portal_agent_id}/channels/livesh/bind",
-                json={"deployment_credential_id": shadow_credential_id},
             )
 
             # 非成员：bob 不属于任何门户
@@ -188,17 +180,15 @@ async def _scenario(tmp_path) -> None:
             assert portal_login.status_code == 200, portal_login.text
             assert portal_login.json()["data"]["hubs"][0]["slug"] == "support"
 
-            # -- 通道列表：恒三条，LIVESH 带提示 ----------------------------
+            # -- 通道列表：只有 TEST / LIVE，影子通道不出现 ------------------
             agents = await client.get(f"/api/portal/hubs/{hub_id}/agents")
             assert agents.status_code == 200, agents.text
             items = agents.json()["data"]["items"]
             assert len(items) == 1
             channels = {item["channel"]: item for item in items[0]["channels"]}
-            assert set(channels) == {"test", "livesh", "live"}
+            assert set(channels) == {"test", "live"}, "影子通道不该出现在展示平台"
             assert channels["live"]["bound"] is True
             assert channels["live"]["version_label"] == version.version_label
-            assert channels["livesh"]["notice"] == "影子预览 · 未返回真实用户"
-            assert channels["test"]["notice"] is None
 
             # -- 对话：打的是通道绑定的版本 --------------------------------
             chat = await client.post(
@@ -211,21 +201,20 @@ async def _scenario(tmp_path) -> None:
             assert body["choices"][0]["message"]["content"] == "echo:你好"
             assert body["version"] == version.version_label
 
-            shadow_chat = await client.post(
+            # 影子通道即使绑了版本+密钥，展示平台也必须拒绝——让访客跟影子版本
+            # 对话在语义上不成立（影子输出不返回给用户）。
+            blocked = await client.post(
                 f"/api/portal/hubs/{hub_id}/agents/{portal_agent_id}"
                 f"/channels/livesh/chat",
                 json={"message": "你好"},
             )
-            assert shadow_chat.json()["data"]["choices"][0]["message"]["content"] == (
-                "shadow:你好"
-            )
-            assert shadow_chat.json()["data"]["notice"] == "影子预览 · 未返回真实用户"
+            assert blocked.status_code == 404, blocked.text
 
             # -- 流式：OpenAI 兼容分块 --------------------------------------
             lines = await _sse_lines(
                 client,
                 f"/api/portal/hubs/{hub_id}/agents/{portal_agent_id}"
-                f"/channels/livesh/chat",
+                f"/channels/live/chat",
                 {"message": "你好", "stream": True},
             )
             data_lines = [line for line in lines if line.startswith("data: ")]
@@ -236,7 +225,7 @@ async def _scenario(tmp_path) -> None:
                 json.loads(line[6:])["choices"][0]["delta"].get("content", "")
                 for line in data_lines[1:-1]
             )
-            assert contents == "shadow:你好"
+            assert contents == "echo:你好"
 
             # -- 限流：超过每分钟上限后 429，而不是把执行面打满 ----------------
             chat_path = (
