@@ -76,6 +76,7 @@ PREFIXES: dict[str, str] = {
     "proposal": "prp",
     "regression_sample": "rsm",
     # delivery
+    "instance": "ins",
     "promotion": "prm",
     "rollback": "rbk",
     "shadow_route": "shr",

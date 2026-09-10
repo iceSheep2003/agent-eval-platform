@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+import logging
 from datetime import timedelta
 
 from ....contracts.asset import AssetQueryPort, ChannelWritePort
 from ....contracts.common import Channel, EvaluationStage, Id, TraceOrigin, VersionLifecycle, Window
 from ....contracts.errors import DomainError, Errors, GateBlocked, NotFound
+from ....contracts.deployment import InstanceControlPort
 from ....contracts.execution import RunQueryPort, RunRef
 from ....contracts.observability import VersionMetrics, VersionMetricsPort
 from ....persistence import UnitOfWork
@@ -41,6 +43,9 @@ from ..infrastructure.repositories import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class DeliveryService:
     def __init__(
         self,
@@ -50,12 +55,15 @@ class DeliveryService:
         channels: ChannelWritePort,
         runs: RunQueryPort,
         metrics: VersionMetricsPort,
+        instances: InstanceControlPort | None = None,
     ) -> None:
         self._db = database
         self._clock = clock
         self._assets = assets
         self._channels = channels
         self._runs = runs
+        #: 运行实例控制。**可选**——不配就是「晋级只改指针，不拉起实例」。
+        self._instances = instances
         self._metrics = metrics
 
     # -- 晋级 ----------------------------------------------------------------
@@ -159,6 +167,23 @@ class DeliveryService:
         async with UnitOfWork(self._db) as uow:
             PromotionRepository(uow.session).add(promotion)
             await uow.commit()
+
+        # 晋级到 LIVE = 发布即生效 —— 自动拉起实例。
+        # LIVESH 不自动：影子什么时候开始接流量由人决定（见 DEFAULT_POLICY 的说明）。
+        if to_channel is Channel.LIVE and self._instances is not None:
+            try:
+                await self._instances.start(
+                    asset_id=asset_id,
+                    channel=Channel.LIVE,
+                    workspace_id=workspace_id,
+                    actor_id=actor_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # **不回滚晋级**：指针已经改了，实例启动是独立的可重试动作。
+                # 实例会以 failed 落库并在界面上可见，凭空回滚反而会让人以为晋级没发生。
+                logger.warning(
+                    "晋级 %s 成功但实例启动失败：%r", asset_id, exc
+                )
         return promotion
 
     async def _audit_run_id(

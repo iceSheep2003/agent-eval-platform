@@ -9,6 +9,8 @@
 
 与 `ExecutionStatus`（落库用）的关系：这里更细。`PROVISIONING` / `SCORING` 在库里
 都记为 `running`，`SETTLED` 记为 `succeeded`——库里的字段是给查询用的粗粒度视图。
+
+机制部分复用 `shared.state_machine.StateMachine`——运行实例的启停是另一条同构的状态机。
 """
 
 from __future__ import annotations
@@ -18,6 +20,11 @@ from enum import StrEnum
 from typing import Mapping
 
 from ....contracts.common import ExecutionStatus
+from ....shared.state_machine import (
+    IllegalTransition,
+    StateMachine,
+    verify_machine,
+)
 
 
 class TrialState(StrEnum):
@@ -59,7 +66,13 @@ ALLOWED_TRANSITIONS: Mapping[TrialState, frozenset[TrialState]] = {
     ),
     # 多轮协议会在 RUNNING 里自循环；单轮协议直接进 SCORING
     TrialState.RUNNING: frozenset(
-        {TrialState.RUNNING, TrialState.SCORING, TrialState.FAILED, TrialState.TIMED_OUT, TrialState.CANCELLED}
+        {
+            TrialState.RUNNING,
+            TrialState.SCORING,
+            TrialState.FAILED,
+            TrialState.TIMED_OUT,
+            TrialState.CANCELLED,
+        }
     ),
     TrialState.SCORING: frozenset(
         {TrialState.SETTLED, TrialState.FAILED, TrialState.CANCELLED}
@@ -86,50 +99,25 @@ STORAGE_STATUS: Mapping[TrialState, ExecutionStatus] = {
     TrialState.SKIPPED: ExecutionStatus.SUCCEEDED,
 }
 
-
-class IllegalTransition(RuntimeError):
-    """状态机拒绝了这次迁移。出现在这里说明代码有 bug，不该被 catch 掉。"""
+# 启动时自检：状态与迁移表必须对得上，别等跑到那一步才炸
+verify_machine(TrialState, ALLOWED_TRANSITIONS)
 
 
 @dataclass
-class TrialMachine:
-    """一次 Trial 的状态机实例。
+class TrialMachine(StateMachine[TrialState]):
+    """一次 Trial 的状态机实例。"""
 
-    刻意是**可变对象**：它就是「当前走到哪了」的载体。领域层其余部分用冻结 dataclass，
-    但状态机需要记录迁移历史，冻结反而别扭。
-    """
-
+    transitions: Mapping[TrialState, frozenset[TrialState]] = field(
+        default_factory=lambda: ALLOWED_TRANSITIONS
+    )
+    terminal: frozenset[TrialState] = field(default_factory=lambda: TERMINAL_STATES)
+    initial: TrialState = TrialState.PENDING
     state: TrialState = TrialState.PENDING
     history: list[TrialState] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        self.history = [self.state]
-
-    @property
-    def is_terminal(self) -> bool:
-        return self.state in TERMINAL_STATES
-
-    def can(self, target: TrialState) -> bool:
-        return target in ALLOWED_TRANSITIONS[self.state]
-
-    def to(self, target: TrialState) -> TrialState:
-        # 原地迁移是幂等的 no-op：调用方（方案的兜底、重复触发）不必先判断当前状态
-        if target is self.state:
-            return self.state
-        if self.is_terminal:
-            raise IllegalTransition(f"{self.state} 是终态，不能再迁移到 {target}")
-        if not self.can(target):
-            raise IllegalTransition(f"不允许从 {self.state} 迁移到 {target}")
-        self.state = target
-        self.history.append(target)
-        return self.state
 
     @property
     def storage_status(self) -> ExecutionStatus:
         return STORAGE_STATUS[self.state]
-
-    def path(self) -> str:
-        return " → ".join(item.value for item in self.history)
 
 
 __all__ = [

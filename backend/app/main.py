@@ -27,6 +27,7 @@ from .modules.asset.api.capability_router import router as capability_router
 from .modules.asset.api.router import router as asset_router
 from .modules.dataset.api.router import router as dataset_router
 from .modules.delivery.api.router import router as delivery_router
+from .modules.deployment.api.router import router as deployment_router
 from .modules.evaluation.api.router import router as evaluation_router
 from .modules.execution.api.gateway import router as gateway_router
 from .modules.execution.api.router import router as execution_router
@@ -47,6 +48,7 @@ CONSOLE_ROUTERS = (
     execution_router,
     trace_router,
     delivery_router,
+    deployment_router,
     agents_view_router,
     overview_router,
     regression_router,

@@ -94,6 +94,14 @@ async def _scenario(tmp_path) -> None:
                 actor_id=owner,
             )
 
+        # LIVE 走常驻实例：绑完通道要显式启动，之后才能被调用
+        await container.deployments.start(
+            asset_id=agent.id,
+            channel=Channel.LIVE,
+            workspace_id=workspace_id,
+            actor_id=owner,
+        )
+
         # -- 1. 加密存储：库里没有明文 -------------------------------------
         live_secret = await container.assets.put_secret(
             workspace_id=workspace_id,

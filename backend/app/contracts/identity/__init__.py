@@ -66,6 +66,11 @@ class Permission(StrEnum):
     TEMPLATE_BIND = "template:bind"
     GATE_CONFIGURE = "gate:configure"
 
+    # deployment（运行实例启停）
+    INSTANCE_READ = "instance:read"
+    INSTANCE_START = "instance:start"
+    INSTANCE_STOP = "instance:stop"
+
     # execution
     RUN_READ = "run:read"
     RUN_CREATE = "run:create"

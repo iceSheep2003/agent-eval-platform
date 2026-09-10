@@ -140,6 +140,14 @@ async def _scenario(tmp_path) -> None:
             )
             assert bound.status_code == 200, bound.text
 
+            # LIVE 走常驻实例：绑完通道要显式启动，portal 的对话页才调得通
+            await container.deployments.start(
+                asset_id=agent.id,
+                channel=Channel.LIVE,
+                workspace_id=workspace_id,
+                actor_id=owner,
+            )
+
             live_key = await client.post(
                 f"/api/agents/{agent.id}/deployment-keys",
                 json={"channel": "live"},

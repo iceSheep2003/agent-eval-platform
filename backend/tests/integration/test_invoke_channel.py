@@ -152,7 +152,9 @@ async def _scenario(tmp_path) -> None:
         by_origin = {item.origin: item for item in recorded}
         assert by_origin[TraceOrigin.SHADOW].channel is Channel.LIVESH
 
-        # -- 4. 绑一个没有 entrypoint 的 sdk 版本 → 422 而不是 500 ---------
+        # -- 4. 没有 entrypoint 的 sdk 版本 → 422 而不是 500 ---------------
+        # 走 TEST：LIVE 现在有更早的一道闸门（必须先启动实例），
+        # 用它测「无 entrypoint」会被实例检查先拦下，测不到这条分支。
         sdk_version = await container.assets.create_version(
             asset_id=agent.id,
             workspace_id=workspace_id,
@@ -161,7 +163,7 @@ async def _scenario(tmp_path) -> None:
         )
         await container.assets.bind_channel(
             asset_id=agent.id,
-            channel=Channel.LIVE,
+            channel=Channel.TEST,
             version_id=sdk_version.id,
             workspace_id=workspace_id,
             actor_id=owner,
@@ -171,7 +173,7 @@ async def _scenario(tmp_path) -> None:
                 ChannelInvocation(
                     workspace_id=workspace_id,
                     asset_id=agent.id,
-                    channel=Channel.LIVE,
+                    channel=Channel.TEST,
                     input="hi",
                 )
             )
@@ -344,6 +346,13 @@ async def _structured_scenario(tmp_path) -> None:
             asset_id=agent.id,
             channel=Channel.LIVE,
             version_id=version.id,
+            workspace_id=workspace_id,
+            actor_id=owner,
+        )
+        # LIVE 走常驻实例：先绑通道，再启动，然后才能被调用
+        await container.deployments.start(
+            asset_id=agent.id,
+            channel=Channel.LIVE,
             workspace_id=workspace_id,
             actor_id=owner,
         )

@@ -74,6 +74,14 @@ async def _bind(container: Container, workspace_id: str, owner: str, entrypoint:
         workspace_id=workspace_id,
         actor_id=owner,
     )
+    # LIVE 必须走常驻实例——生产链路不该每次调用现拉一个环境。
+    # 启动的前提是该通道已绑定版本（上面刚绑好）。
+    await container.deployments.start(
+        asset_id=agent.id,
+        channel=Channel.LIVE,
+        workspace_id=workspace_id,
+        actor_id=owner,
+    )
     return agent
 
 

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from .modules.asset.application.services import AssetService
 from .modules.dataset.application.services import DatasetService
 from .modules.evaluation.application.services import EvaluationService
+from .modules.deployment.application.services import DeploymentService
 from .modules.delivery.application.services import DeliveryService
 from .modules.execution.application.services import ExecutionHandlers, InvokeService, RunService
 from .runtime_adapters.local_sandbox import LocalSandboxRuntime
@@ -49,6 +50,7 @@ class Container:
     execution_handlers: ExecutionHandlers
     traces: TraceService
     delivery: DeliveryService
+    deployments: DeploymentService
     portal_auth: PortalAuthService
     portal: PortalService
     portal_limiter: PortalRateLimiter
@@ -97,8 +99,14 @@ class Container:
         )
         # 主仓库给 TraceService 加了给能力资产归因的 attributions 端口
         traces = TraceService(database, resolved_clock, assets, attributions=assets)
-        # delivery 多了 traces——LIVESH→LIVE 晋级要比对影子与基线的真实指标
-        delivery = DeliveryService(database, resolved_clock, assets, assets, runs, traces)
+        # 运行实例：与发布通道是两条独立生命周期。冻结版本/晋级都不启动实例，
+        # 只有显式 start（或晋级到 LIVE）才拉起来。
+        deployments = DeploymentService(database, resolved_clock, assets, sandbox)
+        # delivery 多了 traces——LIVESH→LIVE 晋级要比对影子与基线的真实指标；
+        # 以及 deployments——晋级到 LIVE 时自动拉起实例（发布即生效）
+        delivery = DeliveryService(
+            database, resolved_clock, assets, assets, runs, traces, deployments
+        )
         # 记忆工厂：execution 只认「给我一个能出收窄句柄的东西」，
         # 不 import memory 模块的具体实现。
         def build_memory(key, workspace_id):
@@ -113,6 +121,7 @@ class Container:
             clock=resolved_clock,
             secrets=assets,
             memory_factory=build_memory,
+            instances=deployments,
         )
         portal_auth = PortalAuthService(
             database, resolved_clock, session_hours=resolved.portal_session_hours
@@ -145,6 +154,7 @@ class Container:
             execution_handlers=execution_handlers,
             traces=traces,
             delivery=delivery,
+            deployments=deployments,
             portal_auth=portal_auth,
             portal=portal,
             portal_limiter=portal_limiter,

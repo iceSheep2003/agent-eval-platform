@@ -24,6 +24,7 @@ _READONLY = _R(
         P.TRACE_READ,
         P.METRICS_READ,
         P.PROPOSAL_READ,
+        P.INSTANCE_READ,
     }
 )
 
@@ -38,6 +39,8 @@ _DEVELOPER = _READONLY | _R(
         P.ASSET_BIND,
         P.RUN_CREATE,
         P.RUN_CONTROL,
+        P.INSTANCE_START,
+        P.INSTANCE_STOP,
         P.PROPOSAL_SUBMIT,
     }
 )
@@ -105,6 +108,9 @@ OWNER_SCOPED: frozenset[P] = _R(
         P.ASSET_CREDENTIAL_REVOKE,
         P.ASSET_BIND,
         P.RUN_CONTROL,
+        # 启动 LIVE 实例等于动生产；developer 只能启停自己负责的 Agent
+        P.INSTANCE_START,
+        P.INSTANCE_STOP,
     }
 )
 

@@ -31,6 +31,7 @@ from ....contracts.common import (
     Verdict,
 )
 from ....contracts.dataset import SampleReaderPort, SampleRef
+from ....contracts.deployment import InstanceLookupPort
 from ....contracts.execution import (
     ChannelInvocation,
     RunRef,
@@ -60,7 +61,13 @@ from ..infrastructure.repositories import (
     ScoreRepository,
     TrialRepository,
 )
-from .ports import InvocationContext, RunContext, RuntimePort, RuntimeSpec
+from .ports import (
+    InvocationContext,
+    RunContext,
+    RuntimeHandle,
+    RuntimePort,
+    RuntimeSpec,
+)
 
 RUN_PREPARE = "run.prepare"
 TRIAL_EXECUTE = "trial.execute"
@@ -788,9 +795,12 @@ class InvokeService:
         clock: Clock | None = None,
         secrets: SecretResolverPort | None = None,
         memory_factory: Callable[[MemoryKey, Id], MemorySessionPort] | None = None,
+        instances: InstanceLookupPort | None = None,
     ) -> None:
         self._assets = assets
         self._runtime = runtime
+        #: 常驻实例查询。**可选**——不配就是「每次调用现起现销毁」的纯沙箱行为。
+        self._instances = instances
         self._traces = traces
         self._clock = clock or SystemClock()
         #: 资源密钥解析。**可选**——没配的部署不注入密钥。
@@ -802,11 +812,7 @@ class InvokeService:
     async def invoke_channel(self, request: ChannelInvocation) -> InvokeResult:
         version, ctx, payload = await self._prepare(request)
         started_at = self._clock.now()
-        handle = await self._provision(version, request, ctx)
-        try:
-            result = await self._runtime.invoke(handle, payload, ctx)
-        finally:
-            await self._runtime.teardown(handle)
+        result = await self._dispatch(request, version, payload, ctx)
 
         trace_id = await self._record(
             request,
@@ -825,6 +831,47 @@ class InvokeService:
             # 编排拿它当子调用的 parent，调用树才连得起来。
             invocation_id=payload["__invocation_id__"],
         )
+
+    async def _dispatch(
+        self,
+        request: ChannelInvocation,
+        version: AssetVersionRef,
+        payload: Mapping[str, Any],
+        ctx: InvocationContext,
+    ) -> InvokeResult:
+        """按通道决定走常驻实例还是临时沙箱。
+
+        - **LIVE 必须走常驻实例**：生产链路不该每次调用现拉一个环境，
+          而且「没有实例」这件事必须显式报错——否则 stop 形同虚设。
+        - **TEST / LIVESH 允许临时沙箱**：调试与影子验证容忍冷启动，
+          没启动实例也能调。
+        """
+        if self._instances is not None:
+            instance = await self._instances.running_for(
+                request.asset_id, request.channel, request.workspace_id
+            )
+            if instance is not None:
+                # 常驻实例**不能**用完就销毁——`teardown` 只在 stop 时发生
+                handle = RuntimeHandle(
+                    id=instance.handle_id or instance.id,
+                    asset_version_id=instance.asset_version_id,
+                    endpoint=instance.endpoint,
+                    ephemeral=False,
+                )
+                return await self._runtime.invoke(handle, payload, ctx)
+
+        if request.channel is Channel.LIVE:
+            raise DomainError(
+                Errors.RUN_STATE_CONFLICT,
+                "LIVE 通道没有运行中的实例，请先在实例面板启动",
+                channel=request.channel.value,
+            )
+
+        handle = await self._provision(version, request, ctx)
+        try:
+            return await self._runtime.invoke(handle, payload, ctx)
+        finally:
+            await self._runtime.teardown(handle)
 
     async def stream_channel(
         self, request: ChannelInvocation

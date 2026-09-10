@@ -84,6 +84,59 @@ class ChannelInvocation:
 
 
 @dataclass(frozen=True, slots=True)
+class InvocationContext:
+    """一次调用的上下文。运行实例与临时沙箱共用同一个形状。"""
+
+    workspace_id: Id
+    tenant_id: Id | None
+    timeout_seconds: float
+    cost_budget_usd: float
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSpec:
+    """启动被测对象所需的最小信息。"""
+
+    asset_id: Id
+    asset_version_id: Id
+    workspace_id: Id
+    entrypoint: str | None
+    artifact_ref: str | None = None
+    spec: Mapping[str, Any] = field(default_factory=dict)
+    #: 已解析的能力资产版本：`provider_asset_id → provider version spec`。
+    #: 来自冻结快照，**不是**实时解析——历史 Run 必须可复现。
+    capabilities: Mapping[Id, Mapping[str, Any]] = field(default_factory=dict)
+    memory: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeHandle:
+    """执行面句柄。`ephemeral=False` 表示常驻实例——**不能**用完就销毁。"""
+
+    id: str
+    asset_version_id: Id
+    endpoint: str | None = None
+    ephemeral: bool = True
+
+
+@runtime_checkable
+class RuntimePort(Protocol):
+    """执行面。`LocalSandboxRuntime` 是本地确定性实现，k8s 换成 Docker / K8s Adapter。"""
+
+    async def provision(self, spec: RuntimeSpec, ctx: InvocationContext) -> RuntimeHandle: ...
+
+    async def invoke(
+        self, handle: RuntimeHandle, payload: Mapping[str, Any], ctx: InvocationContext
+    ) -> InvokeResult: ...
+
+    def invoke_stream(
+        self, handle: RuntimeHandle, payload: Mapping[str, Any], ctx: InvocationContext
+    ) -> AsyncIterator[str]: ...
+
+    async def teardown(self, handle: RuntimeHandle) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
 class InvokeResult:
     """一次调用的结果。`trace_id` 是平台落库后的 Trace ID（可能为 None）。"""
 
@@ -168,6 +221,10 @@ class EntrypointProbePort(Protocol):
 
 __all__ = [
     "ChannelInvocation",
+    "InvocationContext",
+    "RuntimeHandle",
+    "RuntimePort",
+    "RuntimeSpec",
     "EntrypointProbePort",
     "EntrypointReport",
     "RunQueryPort",
