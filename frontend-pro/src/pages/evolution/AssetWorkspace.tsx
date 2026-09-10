@@ -10,7 +10,6 @@ import {
   CodeOutlined,
   DatabaseOutlined,
   FileTextOutlined,
-  HistoryOutlined,
   LinkOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -39,7 +38,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useWorkspace } from '@/hooks/useWorkspace';
 import type {
   AssetChannel,
-  CapabilityDeployment,
   CapabilityAsset,
   CapabilityBinding,
   CapabilityKind,
@@ -47,23 +45,21 @@ import type {
   ChannelName,
   ResourceMetrics,
   RetrievalTestResult,
-  PromotionPreview,
 } from '@/services/capability';
 import {
   checkMcpConnection,
   createCapabilityAsset,
   createCapabilityVersion,
   getCapabilityAsset,
-  getPromotionPreview,
   getResourceMetrics,
   listCapabilityAssets,
-  listCapabilityDeployments,
   listCapabilityVersions,
   listProviderBindings,
   promoteCapabilityVersion,
-  rollbackCapabilityChannel,
   rebuildKnowledgeIndex,
+  rollbackCapabilityChannel,
   testKnowledgeRetrieval,
+  updateCapabilityConfig,
 } from '@/services/capability';
 import styles from './style.module.css';
 
@@ -202,8 +198,15 @@ function specFromDraft(
   return {
     ...base,
     kind,
-    embedding_model: draft.embeddingModel,
-    index_name: draft.indexName,
+    embedding_provider_id: draft.embeddingModel,
+    index_name:
+      String(base.index_name ?? '').trim() ||
+      draft.indexName.trim() ||
+      draft.name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-') ||
+      `kb-${Date.now()}`,
     chunk_strategy: {
       mode: 'fixed',
       size: draft.chunkSize,
@@ -212,7 +215,7 @@ function specFromDraft(
     retrieval: {
       mode: draft.retrievalMode,
       top_k: draft.topK,
-      ...(draft.reranker ? { reranker: draft.reranker } : {}),
+      ...(draft.reranker ? { rerank_provider_id: draft.reranker } : {}),
     },
     sources: lines(draft.sources).map((line, index) => {
       const [name, uri = ''] = line.split('|').map((item) => item.trim());
@@ -247,13 +250,15 @@ function draftFromSpec(spec?: Record<string, unknown>): Draft {
     tools: tools
       .map((tool) => `${tool.name ?? ''} | ${tool.description ?? ''}`)
       .join('\n'),
-    embeddingModel: String(spec.embedding_model ?? ''),
+    embeddingModel: String(
+      spec.embedding_provider_id ?? spec.embedding_model ?? '',
+    ),
     indexName: String(spec.index_name ?? ''),
     chunkSize: Number(chunk.size ?? 800),
     chunkOverlap: Number(chunk.overlap ?? 200),
     retrievalMode: String(retrieval.mode ?? 'hybrid'),
     topK: Number(retrieval.top_k ?? 5),
-    reranker: String(retrieval.reranker ?? ''),
+    reranker: String(retrieval.rerank_provider_id ?? retrieval.reranker ?? ''),
     sources: sources
       .map((source) => `${source.name ?? ''} | ${source.uri ?? ''}`)
       .join('\n'),
@@ -405,22 +410,15 @@ function ResourceEditor({
               />
             </label>
           )}
-          <div className={styles.formGrid}>
-            <label>
-              <span>Embedding 模型</span>
-              <Input
-                value={draft.embeddingModel}
-                onChange={(e) => set('embeddingModel', e.target.value)}
-              />
-            </label>
-            <label>
-              <span>索引名</span>
-              <Input
-                value={draft.indexName}
-                onChange={(e) => set('indexName', e.target.value)}
-              />
-            </label>
-          </div>
+          <label>
+            <span>Embedding Provider</span>
+            <small>填写已经配置好的向量模型服务 ID</small>
+            <Input
+              value={draft.embeddingModel}
+              placeholder="例如 embedding-bge-m3"
+              onChange={(e) => set('embeddingModel', e.target.value)}
+            />
+          </label>
           <label>
             <span>数据源</span>
             <small>每行一个：来源名 | URL 或存储路径</small>
@@ -470,7 +468,7 @@ function ResourceEditor({
               />
             </label>
             <label>
-              <span>Reranker（可选）</span>
+              <span>Reranker Provider（可选）</span>
               <Input
                 value={draft.reranker}
                 onChange={(e) => set('reranker', e.target.value)}
@@ -752,7 +750,11 @@ function KnowledgeSpec({
           <dl>
             <div>
               <dt>Embedding</dt>
-              <dd>{String(spec.embedding_model ?? '—')}</dd>
+              <dd>
+                {String(
+                  spec.embedding_provider_id ?? spec.embedding_model ?? '—',
+                )}
+              </dd>
             </div>
             <div>
               <dt>分块 / 重叠</dt>
@@ -832,10 +834,12 @@ export default function AssetWorkspace({ kind }: Props) {
         const isLive = Boolean(channelOf(asset.channels, 'live')?.version_id);
         return (
           matches &&
-          (filter === 'all' || (filter === 'live' ? isLive : !isLive))
+          (kind !== 'skill' ||
+            filter === 'all' ||
+            (filter === 'live' ? isLive : !isLive))
         );
       }),
-    [assets, query, filter],
+    [assets, query, filter, kind],
   );
   const create = async () => {
     if (!workspace || !draft.name.trim()) {
@@ -886,25 +890,46 @@ export default function AssetWorkspace({ kind }: Props) {
           <strong>{assets.length}</strong>
           <small>个受控资源</small>
         </div>
-        <div className={styles.lifecycleMini}>
-          {CHANNELS.map((channel, index) => (
-            <div key={channel}>
-              <b>{index + 1}</b>
-              <span>{channelMeta[channel].label}</span>
-              {index < 2 && <i />}
+        {kind === 'skill' ? (
+          <div className={styles.lifecycleMini}>
+            {CHANNELS.map((channel, index) => (
+              <div key={channel}>
+                <b>{index + 1}</b>
+                <span>{channelMeta[channel].label}</span>
+                {index < 2 && <i />}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className={styles.lifecycleMini}>
+            <div>
+              <b>1</b>
+              <span>配置</span>
+              <i />
             </div>
-          ))}
-        </div>
+            <div>
+              <b>2</b>
+              <span>验证</span>
+              <i />
+            </div>
+            <div>
+              <b>3</b>
+              <span>启用</span>
+            </div>
+          </div>
+        )}
         <div>
-          <span>LIVE</span>
+          <span>{kind === 'skill' ? 'LIVE' : 'CURRENT'}</span>
           <strong>
             {
-              assets.filter(
-                (asset) => channelOf(asset.channels, 'live')?.version_id,
+              assets.filter((asset) =>
+                kind === 'skill'
+                  ? channelOf(asset.channels, 'live')?.version_id
+                  : asset.latest_version,
               ).length
             }
           </strong>
-          <small>已进入生产</small>
+          <small>{kind === 'skill' ? '已进入生产' : '已配置可用'}</small>
         </div>
       </section>
       <section className={styles.directoryPanel}>
@@ -916,15 +941,17 @@ export default function AssetWorkspace({ kind }: Props) {
             onChange={(e) => setQuery(e.target.value)}
             placeholder={`搜索 ${meta.noun}、描述或负责人`}
           />
-          <Select
-            value={filter}
-            onChange={setFilter}
-            options={[
-              { value: 'all', label: '全部状态' },
-              { value: 'live', label: '已上 LIVE' },
-              { value: 'draft', label: '待发布' },
-            ]}
-          />
+          {kind === 'skill' && (
+            <Select
+              value={filter}
+              onChange={setFilter}
+              options={[
+                { value: 'all', label: '全部状态' },
+                { value: 'live', label: '已上 LIVE' },
+                { value: 'draft', label: '待发布' },
+              ]}
+            />
+          )}
           <Button
             icon={<ReloadOutlined />}
             loading={loading}
@@ -933,9 +960,9 @@ export default function AssetWorkspace({ kind }: Props) {
         </header>
         <div className={styles.registryHead}>
           <span>资源</span>
-          <span>生命周期</span>
+          <span>{kind === 'skill' ? '生命周期' : '当前状态'}</span>
           <span>影响面</span>
-          <span>版本 / 更新</span>
+          <span>{kind === 'skill' ? '版本 / 更新' : '配置更新'}</span>
           <span />
         </div>
         <div className={styles.registryRows}>
@@ -955,29 +982,38 @@ export default function AssetWorkspace({ kind }: Props) {
                   <code>{asset.owner}</code>
                 </span>
               </span>
-              <span className={styles.channelDots}>
-                {CHANNELS.map((channel) => (
-                  <i
-                    key={channel}
-                    className={
-                      channelOf(asset.channels, channel)?.version_id
-                        ? styles.channelReady
-                        : ''
-                    }
-                  >
-                    <b>{channelMeta[channel].label}</b>
-                    <small>
-                      {channelOf(asset.channels, channel)?.version_label ?? '—'}
-                    </small>
-                  </i>
-                ))}
-              </span>
+              {kind === 'skill' ? (
+                <span className={styles.channelDots}>
+                  {CHANNELS.map((channel) => (
+                    <i
+                      key={channel}
+                      className={
+                        channelOf(asset.channels, channel)?.version_id
+                          ? styles.channelReady
+                          : ''
+                      }
+                    >
+                      <b>{channelMeta[channel].label}</b>
+                      <small>
+                        {channelOf(asset.channels, channel)?.version_label ??
+                          '—'}
+                      </small>
+                    </i>
+                  ))}
+                </span>
+              ) : (
+                <span>
+                  <Tag color="success">已配置</Tag>
+                </span>
+              )}
               <span>
                 <strong>{asset.binding_count}</strong>
                 <small>Agent 引用</small>
               </span>
               <span>
-                <strong>{asset.version_count}</strong>
+                <strong>
+                  {kind === 'skill' ? asset.version_count : '当前'}
+                </strong>
                 <small>{formatDate(asset.updated_at)}</small>
               </span>
               <ArrowRightOutlined />
@@ -1021,16 +1057,11 @@ export function AssetDetail({ kind }: Props) {
   const [asset, setAsset] = useState<CapabilityAsset | null>(null);
   const [versions, setVersions] = useState<CapabilityVersion[]>([]);
   const [bindings, setBindings] = useState<CapabilityBinding[]>([]);
-  const [deployments, setDeployments] = useState<CapabilityDeployment[]>([]);
   const [metrics, setMetrics] = useState<ResourceMetrics | null>(null);
   const [channel, setChannel] = useState<ChannelName>('test');
   const [loading, setLoading] = useState(true);
   const [actionBusy, setActionBusy] = useState(false);
   const [versionOpen, setVersionOpen] = useState(false);
-  const [promotionTarget, setPromotionTarget] =
-    useState<ChannelName | null>(null);
-  const [promotionPreview, setPromotionPreview] =
-    useState<PromotionPreview | null>(null);
   const [rollbackOpen, setRollbackOpen] = useState(false);
   const [rollbackVersionId, setRollbackVersionId] = useState('');
   const [rollbackReason, setRollbackReason] = useState('');
@@ -1042,17 +1073,14 @@ export function AssetDetail({ kind }: Props) {
     if (!workspace || !id) return;
     setLoading(true);
     try {
-      const [nextAsset, versionResult, bindingResult, deploymentResult] =
-        await Promise.all([
+      const [nextAsset, versionResult, bindingResult] = await Promise.all([
         getCapabilityAsset(workspace.id, id),
         listCapabilityVersions(workspace.id, id),
         listProviderBindings(workspace.id, id),
-          listCapabilityDeployments(workspace.id, id).catch(() => ({ items: [] })),
-        ]);
+      ]);
       setAsset(nextAsset);
       setVersions(versionResult.items ?? []);
       setBindings(bindingResult.items ?? []);
-      setDeployments(deploymentResult.items ?? []);
     } catch {
       message.error('资源加载失败');
     } finally {
@@ -1064,8 +1092,10 @@ export function AssetDetail({ kind }: Props) {
   }, [load]);
   const pointer = asset ? channelOf(asset.channels, channel) : undefined;
   const activeVersion =
-    versions.find((item) => item.id === pointer?.version_id) ??
-    (channel === 'test' ? versions[0] : undefined);
+    kind === 'skill'
+      ? (versions.find((item) => item.id === pointer?.version_id) ??
+        (channel === 'test' ? versions[0] : undefined))
+      : (asset?.latest_version ?? versions[0]);
   useEffect(() => {
     if (!workspace || !asset || !activeVersion) {
       setMetrics(null);
@@ -1096,10 +1126,14 @@ export function AssetDetail({ kind }: Props) {
     if (!workspace || !asset) return;
     setLoading(true);
     try {
-      await createCapabilityVersion(workspace.id, asset.id, {
-        spec: specFromDraft(kind, draft, baseSpec),
-      });
-      message.success('新版本已冻结并进入 TEST');
+      const spec = specFromDraft(kind, draft, baseSpec);
+      if (kind === 'skill') {
+        await createCapabilityVersion(workspace.id, asset.id, { spec });
+        message.success('新版本已冻结并进入 TEST');
+      } else {
+        await updateCapabilityConfig(workspace.id, asset.id, spec);
+        message.success('当前配置已更新');
+      }
       setVersionOpen(false);
       await load();
     } catch {
@@ -1108,38 +1142,25 @@ export function AssetDetail({ kind }: Props) {
       setLoading(false);
     }
   };
-  const openPromotion = (target: ChannelName) => {
+  const submitPromotion = async (target: ChannelName) => {
     if (!workspace || !asset || !activeVersion) return;
-    setPromotionTarget(target);
-    setPromotionPreview(null);
-    void getPromotionPreview(workspace.id, asset.id, activeVersion.id, target)
-      .then(setPromotionPreview)
-      .catch(() => setPromotionPreview(null));
-  };
-  const submitPromotion = async () => {
-    if (!workspace || !asset || !activeVersion || !promotionTarget) return;
     await runAction(async () => {
-      await promoteCapabilityVersion(
-        workspace.id,
-        asset.id,
-        activeVersion.id,
-        {
-          channel: promotionTarget,
-          evidence_ids: promotionPreview?.gates
-            .map((gate) => gate.evidence_id)
-            .filter((id): id is string => Boolean(id)),
-        },
-      );
-      setPromotionTarget(null);
+      await promoteCapabilityVersion(workspace.id, asset.id, activeVersion.id, {
+        channel: target,
+        evidence_ids: [],
+      });
       await load();
-    }, `已晋级至 ${channelMeta[promotionTarget].label}`);
+    }, `已晋级至 ${channelMeta[target].label}`);
   };
   const openRollback = () => {
-    const currentVersionId = channelOf(asset?.channels ?? [], channel)?.version_id;
-    const firstCandidate = deployments.find(
-      (item) => item.channel === channel && item.to_version_id !== currentVersionId,
+    const currentVersionId = channelOf(
+      asset?.channels ?? [],
+      channel,
+    )?.version_id;
+    const firstCandidate = versions.find(
+      (item) => item.id !== currentVersionId,
     );
-    setRollbackVersionId(firstCandidate?.to_version_id ?? '');
+    setRollbackVersionId(firstCandidate?.id ?? '');
     setRollbackReason('');
     setRollbackOpen(true);
   };
@@ -1215,35 +1236,9 @@ export function AssetDetail({ kind }: Props) {
   const nextChannel =
     channel === 'test' ? 'livesh' : channel === 'livesh' ? 'live' : null;
   const currentPointer = channelOf(asset.channels, channel);
-  const rollbackOptions = Array.from(
-    new Map(
-      deployments
-        .filter(
-          (item) =>
-            item.channel === channel &&
-            item.to_version_id !== currentPointer?.version_id,
-        )
-        .map((item) => [item.to_version_id, item]),
-    ).values(),
+  const rollbackOptions = versions.filter(
+    (item) => item.id !== currentPointer?.version_id,
   );
-  const visibleDeployments = deployments.length
-    ? deployments
-    : asset.channels
-        .filter((item) => item.version_id)
-        .map((item) => ({
-          id: `current-${item.channel}`,
-          asset_id: asset.id,
-          channel: item.channel,
-          action: 'initial' as const,
-          from_version_id: null,
-          from_version_label: null,
-          to_version_id: item.version_id as string,
-          to_version_label: item.version_label ?? '未知版本',
-          reason: null,
-          evidence_ids: [],
-          actor_id: item.bound_by ?? '系统',
-          created_at: item.bound_at ?? asset.created_at,
-        }));
   return (
     <PageContainer title={false}>
       <button
@@ -1274,18 +1269,21 @@ export function AssetDetail({ kind }: Props) {
         <div className={styles.heroActions}>
           <Button onClick={() => void load()} icon={<ReloadOutlined />} />
           <Button type="primary" icon={<PlusOutlined />} onClick={openVersion}>
-            创建新版本
+            {kind === 'skill' ? '创建新版本' : '编辑当前配置'}
           </Button>
         </div>
       </section>
-      <LifecycleRail asset={asset} active={channel} onChange={setChannel} />
+      {kind === 'skill' && (
+        <LifecycleRail asset={asset} active={channel} onChange={setChannel} />
+      )}
       <section className={styles.detailBody}>
         <div className={styles.versionContext}>
           <div>
             <span>当前查看</span>
             <strong>
-              {channelMeta[channel].label} /{' '}
-              {activeVersion?.version_label ?? '未部署'}
+              {kind === 'skill'
+                ? `${channelMeta[channel].label} / ${activeVersion?.version_label ?? '未部署'}`
+                : '当前生效配置'}
             </strong>
           </div>
           <div>
@@ -1298,17 +1296,17 @@ export function AssetDetail({ kind }: Props) {
             <span>创建时间</span>
             <strong>{formatDate(activeVersion?.created_at)}</strong>
           </div>
-          {nextChannel && activeVersion && (
+          {kind === 'skill' && nextChannel && activeVersion && (
             <Button
               className={styles.promoteButton}
               type="primary"
               ghost
-              onClick={() => openPromotion(nextChannel)}
+              onClick={() => void submitPromotion(nextChannel)}
             >
               晋级至 {channelMeta[nextChannel].label}
             </Button>
           )}
-          {currentPointer?.version_id && (
+          {kind === 'skill' && currentPointer?.version_id && (
             <Button icon={<RollbackOutlined />} onClick={openRollback}>
               回退
             </Button>
@@ -1343,28 +1341,32 @@ export function AssetDetail({ kind }: Props) {
                 </>
               ),
             },
-            {
-              key: 'versions',
-              label: `版本 ${versions.length}`,
-              children: (
-                <div className={styles.versionList}>
-                  {versions.map((version) => (
-                    <article key={version.id}>
-                      <span />
-                      <div>
-                        <strong>{version.version_label}</strong>
-                        <small>
-                          {formatDate(version.created_at)} ·{' '}
-                          {version.created_by}
-                        </small>
+            ...(kind === 'skill'
+              ? [
+                  {
+                    key: 'versions',
+                    label: `版本 ${versions.length}`,
+                    children: (
+                      <div className={styles.versionList}>
+                        {versions.map((version) => (
+                          <article key={version.id}>
+                            <span />
+                            <div>
+                              <strong>{version.version_label}</strong>
+                              <small>
+                                {formatDate(version.created_at)} ·{' '}
+                                {version.created_by}
+                              </small>
+                            </div>
+                            <Tag>{version.lifecycle}</Tag>
+                            <code>{JSON.stringify(version.spec).length} B</code>
+                          </article>
+                        ))}
                       </div>
-                      <Tag>{version.lifecycle}</Tag>
-                      <code>{JSON.stringify(version.spec).length} B</code>
-                    </article>
-                  ))}
-                </div>
-              ),
-            },
+                    ),
+                  },
+                ]
+              : []),
             {
               key: 'bindings',
               label: `引用 ${bindings.length}`,
@@ -1389,11 +1391,19 @@ export function AssetDetail({ kind }: Props) {
                           binding.resolve_mode === 'pinned' ? 'purple' : 'blue'
                         }
                       >
-                        {binding.resolve_mode === 'pinned'
-                          ? '锁定版本'
-                          : `跟随 ${binding.provider_channel?.toUpperCase()}`}
+                        {kind === 'skill'
+                          ? binding.resolve_mode === 'pinned'
+                            ? '锁定版本'
+                            : `跟随 ${binding.provider_channel?.toUpperCase()}`
+                          : '使用当前配置'}
                       </Tag>
-                      <b>{binding.resolved_version_label ?? '未解析'}</b>
+                      <b>
+                        {kind === 'skill'
+                          ? (binding.resolved_version_label ?? '未解析')
+                          : binding.resolved_version_id
+                            ? '当前'
+                            : '未解析'}
+                      </b>
                     </article>
                   ))}
                 </div>
@@ -1406,38 +1416,48 @@ export function AssetDetail({ kind }: Props) {
               label: '运行质量',
               children: <MetricCards metrics={metrics} color={meta.color} />,
             },
-            {
-              key: 'feedback',
-              label: '迭代回流',
-              children: (
-                <div className={styles.feedbackEmpty}>
-                  <CloudSyncOutlined />
-                  <strong>回流通道已预留</strong>
-                  <p>
-                    后续将把 LIVE 的失败
-                    Trace、用户反馈和低置信样本沉淀为候选数据集，发起新一轮 TEST
-                    评测。
-                  </p>
-                  <Button disabled>创建迭代提案</Button>
-                </div>
-              ),
-            },
+            ...(kind === 'skill'
+              ? [
+                  {
+                    key: 'feedback',
+                    label: '迭代回流',
+                    children: (
+                      <div className={styles.feedbackEmpty}>
+                        <CloudSyncOutlined />
+                        <strong>回流通道已预留</strong>
+                        <p>
+                          后续将把 LIVE 的失败
+                          Trace、用户反馈和低置信样本沉淀为候选数据集，发起新一轮
+                          TEST 评测。
+                        </p>
+                        <Button disabled>创建迭代提案</Button>
+                      </div>
+                    ),
+                  },
+                ]
+              : []),
           ]}
         />
       </section>
       <Modal
         open={versionOpen}
-        title={`为 ${asset.name} 创建新版本`}
+        title={
+          kind === 'skill'
+            ? `为 ${asset.name} 创建新版本`
+            : `编辑 ${asset.name}`
+        }
         width={760}
         onCancel={() => setVersionOpen(false)}
         onOk={() => void createVersion()}
-        okText="冻结版本并进入 TEST"
+        okText={kind === 'skill' ? '冻结版本并进入 TEST' : '保存当前配置'}
         confirmLoading={loading}
       >
-        <div className={styles.versionNotice}>
-          <SafetyCertificateOutlined />
-          <span>版本创建后不可修改。先进入 TEST，通过评测门禁后再晋级。</span>
-        </div>
+        {kind === 'skill' && (
+          <div className={styles.versionNotice}>
+            <SafetyCertificateOutlined />
+            <span>版本创建后不可修改。先进入 TEST，通过评测门禁后再晋级。</span>
+          </div>
+        )}
         <ResourceEditor
           kind={kind}
           draft={draft}
@@ -1445,6 +1465,44 @@ export function AssetDetail({ kind }: Props) {
           isCreate={false}
         />
       </Modal>
+      {kind === 'skill' && (
+        <Modal
+          open={rollbackOpen}
+          title={`回退 ${channelMeta[channel].label}`}
+          onCancel={() => setRollbackOpen(false)}
+          onOk={() => void submitRollback()}
+          okText="确认回退"
+          okButtonProps={{
+            danger: true,
+            disabled: !rollbackVersionId || !rollbackReason.trim(),
+          }}
+          confirmLoading={actionBusy}
+        >
+          <div className={styles.editorForm}>
+            <label>
+              <span>目标版本</span>
+              <Select
+                value={rollbackVersionId || undefined}
+                placeholder="选择一个历史版本"
+                options={rollbackOptions.map((version) => ({
+                  value: version.id,
+                  label: `${version.version_label} · ${formatDate(version.created_at)}`,
+                }))}
+                onChange={setRollbackVersionId}
+              />
+            </label>
+            <label>
+              <span>回退原因</span>
+              <Input.TextArea
+                rows={3}
+                value={rollbackReason}
+                onChange={(event) => setRollbackReason(event.target.value)}
+                placeholder="说明回退原因，便于审计"
+              />
+            </label>
+          </div>
+        </Modal>
+      )}
     </PageContainer>
   );
 }
