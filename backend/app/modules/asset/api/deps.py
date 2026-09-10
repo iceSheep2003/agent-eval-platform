@@ -35,6 +35,21 @@ async def load_agent(
     return await assets.get_agent(agent_id, actor.workspace_id)
 
 
+async def load_agent_including_archived(
+    agent_id: str,
+    actor: Actor,
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> Asset:
+    """连**已归档**的 Agent 一起加载。
+
+    恢复接口必须用它：`get_agent` 会过滤软删除，用默认 loader 的话
+    「归档了就再也恢复不了」——鉴权依赖自己先把请求 404 掉了。
+    """
+    return await assets.get_agent(
+        agent_id, actor.workspace_id, include_archived=True
+    )
+
+
 async def load_capability(
     asset_id: str,
     actor: Actor,
@@ -64,9 +79,17 @@ def _require_on(permission: Permission, loader: Callable[..., Asset]) -> Callabl
     return dependency
 
 
-def require_on_agent(permission: Permission) -> Callable[..., Asset]:
-    """加载 Agent 并按资源归属判权，返回该 Agent。"""
-    return _require_on(permission, load_agent)
+def require_on_agent(
+    permission: Permission, *, include_archived: bool = False
+) -> Callable[..., Asset]:
+    """加载 Agent 并按资源归属判权，返回该 Agent。
+
+    `include_archived=True` 供恢复接口用——否则软删除的资源连判权的门都进不去。
+    """
+    return _require_on(
+        permission,
+        load_agent_including_archived if include_archived else load_agent,
+    )
 
 
 def require_on_capability(permission: Permission) -> Callable[..., Asset]:
@@ -77,6 +100,7 @@ def require_on_capability(permission: Permission) -> Callable[..., Asset]:
 __all__ = [
     "get_asset_service",
     "load_agent",
+    "load_agent_including_archived",
     "load_capability",
     "require_on_agent",
     "require_on_capability",

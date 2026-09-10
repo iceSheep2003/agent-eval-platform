@@ -157,5 +157,54 @@ async def _scenario(tmp_path) -> None:
         await container.shutdown()
 
 
+async def _archive_scenario(tmp_path) -> None:
+    """归档后**必须还能恢复**。
+
+    踩过的坑：恢复路由走 `require_on_agent`，而它用的 `get_agent` 会过滤软删除，
+    于是鉴权依赖自己先把请求 404 掉了——归档一次就永远恢复不了。
+    """
+    clock = FixedClock()
+    container = _container(tmp_path, clock)
+    await container.startup()
+    try:
+        seeded = await seed(container)
+        workspace_id = seeded["workspace_id"]
+        owner = seeded["admin"]
+        agent = await container.assets.register_agent(
+            workspace_id=workspace_id,
+            owner_id=owner,
+            name="archivable",
+            connect_type="package",
+            source={
+                "artifact_id": "x",
+                "entrypoint": COMPLIANT,
+                "memory": {"scope": "stateless"},
+            },
+        )
+
+        app = create_app(container)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            await client.post(
+                "/api/auth/login", json={"identifier": "admin", "password": "admin123"}
+            )
+            assert (await client.delete(f"/api/agents/{agent.id}")).status_code == 200
+            names = [x["id"] for x in (await client.get("/api/agents")).json()["data"]["items"]]
+            assert agent.id not in names, "归档后不该出现在列表"
+
+            restored = await client.post(f"/api/agents/{agent.id}/restore")
+            assert restored.status_code == 200, restored.text
+            names = [x["id"] for x in (await client.get("/api/agents")).json()["data"]["items"]]
+            assert agent.id in names, "恢复后应当回到列表"
+    finally:
+        await container.shutdown()
+
+
+def test_archived_agent_can_be_restored(tmp_path) -> None:
+    asyncio.run(_archive_scenario(tmp_path))
+
+
 def test_agent_conformance(tmp_path) -> None:
     asyncio.run(_scenario(tmp_path))

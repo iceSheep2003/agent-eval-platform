@@ -10,6 +10,7 @@ from typing import Sequence
 
 from ....contracts.asset import AssetQueryPort
 from ....contracts.common import Channel, Id
+from ....contracts.errors import NotFound
 from ....contracts.improvement import ImpactReport
 
 
@@ -18,6 +19,15 @@ class ImpactService:
         self._assets = assets
 
     async def impact_of(self, asset_id: Id, workspace_id: Id) -> ImpactReport:
+        asset = await self._assets.get_asset(asset_id, workspace_id)
+        if asset is None:
+            raise NotFound("资产", asset_id)
+
+        # 只有**能力资产**会被别人引用；Agent 是消费方，没人「引用」它。
+        # 这时候返回空报告而不是报错——用户查了就该得到「没人受影响」这个答案。
+        if asset.kind.value == "agent":
+            return ImpactReport(asset_id=asset_id)
+
         direct = tuple(await self._assets.consumers_of_asset(asset_id, workspace_id))
 
         # 间接：引用了这个资产的 Agent，各自又引用了什么。
@@ -31,7 +41,10 @@ class ImpactService:
                 if provider_id != asset_id:
                     transitive.add(provider_id)
 
-        channels = await self._assets.channel_map(asset_id, workspace_id)
+        try:
+            channels = await self._assets.channel_map(asset_id, workspace_id)
+        except Exception:  # noqa: BLE001 - 没有通道概念的类型就返回空
+            channels = {}
         return ImpactReport(
             asset_id=asset_id,
             direct_consumers=direct,

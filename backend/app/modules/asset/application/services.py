@@ -227,18 +227,33 @@ class AssetService:
     async def list_agents(self, workspace_id: str) -> Sequence[Asset]:
         return await self.list_assets(workspace_id, AssetKind.AGENT)
 
-    async def get_asset_or_404(self, asset_id: str, workspace_id: str) -> Asset:
-        """四类资产通用加载。调用方需要限定 kind 时用 `_require_kind`。"""
+    async def get_asset_or_404(
+        self, asset_id: str, workspace_id: str, *, include_archived: bool = False
+    ) -> Asset:
+        """四类资产通用加载。调用方需要限定 kind 时用 `_require_kind`。
+
+        `include_archived=True` 供**恢复**这类必须看见已归档资源的场景用。
+        """
         async with UnitOfWork(self._db) as uow:
-            asset = await AssetRepository(uow.session).get(asset_id, workspace_id)
+            asset = await AssetRepository(uow.session).get(
+                asset_id, workspace_id, include_deleted=include_archived
+            )
         if asset is None:
             raise NotFound("资产", asset_id)
         return asset
 
-    async def get_agent(self, asset_id: str, workspace_id: str) -> Asset:
-        """`/agents/{id}` 与资源级鉴权用。**必须是 agent**——否则 Skill 的 id 能打到 Agent 接口上。"""
+    async def get_agent(
+        self, asset_id: str, workspace_id: str, *, include_archived: bool = False
+    ) -> Asset:
+        """`/agents/{id}` 与资源级鉴权用。**必须是 agent**——否则 Skill 的 id 能打到 Agent 接口上。
+
+        `include_archived=True` 供恢复接口用：默认过滤软删除会让「归档了就再也恢复不了」。
+        """
         return self._require_kind(
-            await self.get_asset_or_404(asset_id, workspace_id), AssetKind.AGENT
+            await self.get_asset_or_404(
+                asset_id, workspace_id, include_archived=include_archived
+            ),
+            AssetKind.AGENT,
         )
 
     async def get_capability(self, asset_id: str, workspace_id: str) -> Asset:

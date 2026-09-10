@@ -141,10 +141,12 @@ async def archive_agent(
 
 @router.post("/agents/{agent_id}/restore")
 async def restore_agent(
-    asset: Annotated[Asset, Depends(require_on_agent(Permission.ASSET_UPDATE))],
+    asset: Annotated[
+        Asset, Depends(require_on_agent(Permission.ASSET_UPDATE, include_archived=True))
+    ],
     assets: Annotated[AssetService, Depends(get_asset_service)],
 ) -> dict:
-    """撤销归档。"""
+    """撤销归档。**必须用 include_archived 的 loader**——默认的会把它 404 掉。"""
     restored = await assets.restore_agent(asset.id, asset.workspace_id)
     return ok((await _agent_dto(assets, restored)).model_dump())
 
