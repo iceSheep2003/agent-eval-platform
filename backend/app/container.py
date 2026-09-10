@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from .modules.asset.application.services import AssetService
 from .modules.dataset.application.services import DatasetService
 from .modules.evaluation.application.services import EvaluationService
+from .modules.delivery.application.services import DeliveryService
 from .modules.execution.application.services import ExecutionHandlers, InvokeService, RunService
 from .runtime_adapters.local_sandbox import LocalSandboxRuntime
 from .modules.identity.application.services import IdentityService
@@ -44,6 +45,7 @@ class Container:
     invoke: InvokeService
     execution_handlers: ExecutionHandlers
     traces: TraceService
+    delivery: DeliveryService
     portal_auth: PortalAuthService
     portal: PortalService
     portal_limiter: PortalRateLimiter
@@ -64,7 +66,7 @@ class Container:
             session_idle_hours=resolved.session_idle_hours,
             session_absolute_hours=resolved.session_absolute_hours,
         )
-        assets = AssetService(database, resolved_clock, identity)
+        assets = AssetService(database, resolved_clock, identity, identity)
         datasets = DatasetService(database, resolved_clock)
         evaluations = EvaluationService(database, resolved_clock, datasets, assets)
         sandbox = LocalSandboxRuntime()
@@ -79,7 +81,9 @@ class Container:
             gates=evaluations,
             runtime=sandbox,
         )
-        traces = TraceService(database, resolved_clock, assets)
+        # 主仓库给 TraceService 加了给能力资产归因的 attributions 端口
+        traces = TraceService(database, resolved_clock, assets, attributions=assets)
+        delivery = DeliveryService(database, resolved_clock, assets, assets, runs)
         invoke = InvokeService(assets, sandbox, traces=traces, clock=resolved_clock)
         portal_auth = PortalAuthService(
             database, resolved_clock, session_hours=resolved.portal_session_hours
@@ -109,6 +113,7 @@ class Container:
             invoke=invoke,
             execution_handlers=execution_handlers,
             traces=traces,
+            delivery=delivery,
             portal_auth=portal_auth,
             portal=portal,
             portal_limiter=portal_limiter,

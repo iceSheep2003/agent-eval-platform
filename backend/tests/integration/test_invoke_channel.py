@@ -53,6 +53,7 @@ def _container(tmp_path, clock: FixedClock) -> Container:
 
 
 async def _register(container: Container, workspace_id: str, owner: str):
+    """接入 Agent。返回 (asset, 首个版本)——新冻结的版本会自动成为 TEST 候选。"""
     agent = await container.assets.register_agent(
         workspace_id=workspace_id,
         owner_id=owner,
@@ -60,7 +61,8 @@ async def _register(container: Container, workspace_id: str, owner: str):
         connect_type="package",
         source={"artifact_id": "artifact-1", "entrypoint": ECHO},
     )
-    return agent
+    versions = await container.assets.list_versions(agent.id, workspace_id)
+    return agent, versions[0]
 
 
 async def _traces(container: Container, workspace_id: str, asset_id: str):
@@ -79,7 +81,7 @@ async def _scenario(tmp_path) -> None:
         seeded = await seed(container)
         workspace_id = seeded["workspace_id"]
         owner = seeded["admin"]
-        agent = await _register(container, workspace_id, owner)
+        agent, first_version = await _register(container, workspace_id, owner)
 
         # -- 1. 接入即绑定 TEST；LIVESH / LIVE 未绑定 -----------------------
         states = await container.assets.channel_states(agent.id, workspace_id)
@@ -133,7 +135,7 @@ async def _scenario(tmp_path) -> None:
             channel=Channel.LIVESH,
             version_id=shadow_version.id,
             workspace_id=workspace_id,
-            bound_by=owner,
+            actor_id=owner,
         )
         shadow = await container.invoke.invoke_channel(
             ChannelInvocation(
@@ -161,7 +163,7 @@ async def _scenario(tmp_path) -> None:
             channel=Channel.LIVE,
             version_id=sdk_version.id,
             workspace_id=workspace_id,
-            bound_by=owner,
+            actor_id=owner,
         )
         with pytest.raises(DomainError) as not_invokable:
             await container.invoke.invoke_channel(
@@ -176,6 +178,15 @@ async def _scenario(tmp_path) -> None:
         assert not_invokable.value.http_status == 422
 
         # -- 5. 网关鉴权：密钥限定通道、跨 Agent、已吊销 --------------------
+        # 上面冻结的 sdk 版本把 TEST 指针带走了（新版本即 TEST 候选），
+        # 这里指回有 entrypoint 的版本，否则测的是「无 entrypoint」那条分支。
+        await container.assets.bind_channel(
+            asset_id=agent.id,
+            channel=Channel.TEST,
+            version_id=first_version.id,
+            workspace_id=workspace_id,
+            actor_id=owner,
+        )
         key = await container.assets.mint_credential(
             workspace_id=workspace_id,
             kind=CredentialKind.DEPLOY,

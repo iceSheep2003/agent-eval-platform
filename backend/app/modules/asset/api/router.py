@@ -21,6 +21,7 @@ from ..domain.models import Asset, AssetVersion, Credential
 from .deps import get_asset_service, require_on_agent
 from .schemas import (
     AgentDTO,
+    CreateCredentialRequest,
     AgentVersionDTO,
     BindChannelRequest,
     ChannelDTO,
@@ -94,6 +95,9 @@ def _credential_dto(credential: Credential) -> CredentialDTO:
         agent_id=credential.asset_id,
         tenant_id=credential.tenant_id,
         channel=credential.channel.value if credential.channel else None,
+        scopes=["trace:write"] if credential.kind is CredentialKind.TRACE else ["agent:invoke"],
+        agent_ids=[credential.asset_id] if credential.asset_id else [],
+        environment=credential.channel.value if credential.channel else None,
         status=credential.status,
         expires_at=credential.expires_at,
         last_used_at=credential.last_used_at,
@@ -111,35 +115,13 @@ async def register_agent(
     assert_permission(container, actor, Permission.ASSET_CREATE)
     asset = await assets.register_agent(
         workspace_id=actor.workspace_id,
-        owner_id=actor.user_id,
+        owner_id=payload.owner_id or actor.user_id,
         name=payload.name,
         description=payload.description,
         connect_type=payload.connect_type,
         environment=payload.environment,
         source=payload.source,
     )
-    return ok((await _agent_dto(assets, asset)).model_dump())
-
-
-@router.get("/agents")
-async def list_agents(
-    actor: Actor,
-    container: Annotated[Container, Depends(get_container)],
-    assets: Annotated[AssetService, Depends(get_asset_service)],
-) -> dict:
-    assert_permission(container, actor, Permission.ASSET_READ)
-    items = [
-        (await _agent_dto(assets, asset)).model_dump()
-        for asset in await assets.list_agents(actor.workspace_id)
-    ]
-    return list_response(items)
-
-
-@router.get("/agents/{agent_id}")
-async def get_agent(
-    asset: Annotated[Asset, Depends(require_on_agent(Permission.ASSET_READ))],
-    assets: Annotated[AssetService, Depends(get_asset_service)],
-) -> dict:
     return ok((await _agent_dto(assets, asset)).model_dump())
 
 
@@ -215,13 +197,15 @@ async def bind_channel(
             owner_id=asset.owner_id,
         ),
     )
-    binding = await assets.bind_channel(
+    # `bind_channel` 是 `ChannelWritePort` 的实现，返回 None——绑完回读指针。
+    await assets.bind_channel(
         asset_id=asset.id,
         channel=channel,
         version_id=payload.version_id,
         workspace_id=asset.workspace_id,
-        bound_by=actor.user_id,
+        actor_id=actor.user_id,
     )
+    binding = (await assets.channel_states(asset.id, asset.workspace_id))[channel]
     versions = {
         version.id: version.version_label
         for version in await assets.list_versions(asset.id, asset.workspace_id)
@@ -292,6 +276,55 @@ async def mint_sdk_key(
         created_at=issued.credential.created_at,
     )
     return ok(dto.model_dump())
+
+
+@router.get("/agents/{agent_id}/artifacts")
+async def list_artifacts(
+    agent_id: str,
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    assert_permission(container, actor, Permission.ASSET_READ)
+    artifacts = await assets.list_artifacts(agent_id, actor.workspace_id)
+    return list_response(
+        [
+            {
+                "id": item.id,
+                "agent_id": item.asset_id,
+                "source_kind": item.source_kind,
+                "version": item.version_label,
+                "source_ref": item.source_ref,
+                "checksum_sha256": item.checksum_sha256,
+                "build_status": item.build_status,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in artifacts
+        ]
+    )
+
+
+@router.post("/agent-credentials")
+async def create_credential(
+    payload: CreateCredentialRequest,
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    """签发机器凭证。明文只在本响应里出现一次。"""
+    assert_permission(container, actor, Permission.ASSET_CREDENTIAL_CREATE)
+    issued = await assets.mint_credential(
+        workspace_id=actor.workspace_id,
+        kind=CredentialKind(payload.kind),
+        asset_id=payload.agent_id,
+        channel=Channel(payload.channel) if payload.channel else None,
+        name=payload.name,
+        expires_at=payload.expires_at,
+    )
+    dto = _credential_dto(issued.credential).model_dump()
+    dto["secret"] = issued.secret
+    dto["scopes"] = payload.scopes or ["trace:write"]
+    return ok(dto)
 
 
 @router.get("/agent-credentials")

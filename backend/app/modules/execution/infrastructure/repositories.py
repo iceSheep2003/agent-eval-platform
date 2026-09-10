@@ -26,6 +26,8 @@ def _run(row: RunRow) -> Run:
         subject_version_id=row.subject_version_id,
         dataset_version_id=row.dataset_version_id,
         template_snapshot=dict(row.template_snapshot or {}),
+        binding_snapshot=dict(row.binding_snapshot or {}),
+        binding_overrides=dict(row.binding_overrides or {}),
         tenant_scope="all" if scope == "all" else tuple(scope or ()),
         status=RunStatus(row.status),
         stage=RunStage(row.stage),
@@ -97,6 +99,21 @@ class RunRepository:
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_run(row) for row in rows]
 
+    async def list_for_version(
+        self, workspace_id: str, version_id: str, limit: int = 50
+    ) -> Sequence[Run]:
+        stmt = (
+            select(RunRow)
+            .where(
+                RunRow.workspace_id == workspace_id,
+                RunRow.subject_version_id == version_id,
+            )
+            .order_by(RunRow.created_at.desc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_run(row) for row in rows]
+
     def add(self, run: Run) -> None:
         self._session.add(
             RunRow(
@@ -108,6 +125,8 @@ class RunRepository:
                 subject_version_id=run.subject_version_id,
                 dataset_version_id=run.dataset_version_id,
                 template_snapshot=dict(run.template_snapshot),
+                binding_snapshot=dict(run.binding_snapshot),
+                binding_overrides=dict(run.binding_overrides),
                 tenant_scope="all" if run.tenant_scope == "all" else list(run.tenant_scope),
                 status=run.status.value,
                 stage=run.stage.value,

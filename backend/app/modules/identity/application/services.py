@@ -8,17 +8,30 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Sequence
 
-from ....contracts.common import Id
+from ....contracts.common import Id, OrgRole, WorkspaceRole
 from ....contracts.errors import DomainError, Errors, NotFound, WorkspaceMismatch
-from ....contracts.identity import ActorContext, Subject
+from ....contracts.identity import ActorContext, MemberRef, Subject
 from ....persistence import Database, UnitOfWork
 from ....shared.clock import Clock
 from ....shared.ids import new_id
-from ..domain.models import Membership, Session, Tenant, User, Workspace
+from ..domain.models import (
+    Invitation,
+    Membership,
+    Organization,
+    OrganizationMembership,
+    Session,
+    Tenant,
+    User,
+    Workspace,
+)
 from ..domain.authorizer import Authorizer
 from ..infrastructure.repositories import (
+    InvitationRepository,
     MembershipRepository,
+    OrganizationMembershipRepository,
+    OrganizationRepository,
     SessionRepository,
     TenantRepository,
     UserRepository,
@@ -83,6 +96,7 @@ class IdentityService:
                 )
             )
             await uow.commit()
+        await self.accept_pending_invitations(user)
         return user, raw_token
 
     async def resolve(
@@ -126,6 +140,7 @@ class IdentityService:
             user_id=user.id,
             display_name=user.display_name,
             email=user.email,
+            organization_id=workspace.organization_id,
             workspace_id=workspace.id,
             workspace_name=workspace.name,
             role=membership.role,
@@ -191,6 +206,259 @@ class IdentityService:
 
     def permissions_of(self, subject: Subject):
         return self._authorizer.permissions_of(subject)
+
+    # -- 组织 ----------------------------------------------------------------
+
+    async def list_organizations(self, user_id: Id) -> Sequence[Organization]:
+        async with UnitOfWork(self._db) as uow:
+            return list(await OrganizationRepository(uow.session).list_for_user(user_id))
+
+    async def org_role_of(self, organization_id: Id, user_id: Id) -> OrgRole | None:
+        async with UnitOfWork(self._db) as uow:
+            membership = await OrganizationMembershipRepository(uow.session).get(
+                organization_id, user_id
+            )
+        return membership.role if membership else None
+
+    async def list_org_members(
+        self, organization_id: Id
+    ) -> Sequence[tuple[OrganizationMembership, User]]:
+        async with UnitOfWork(self._db) as uow:
+            return list(
+                await OrganizationMembershipRepository(uow.session).list_members(
+                    organization_id
+                )
+            )
+
+    async def add_org_member(
+        self, organization_id: Id, identifier: str, role: OrgRole
+    ) -> OrganizationMembership:
+        """按用户名或邮箱把已有账号加进组织。"""
+        async with UnitOfWork(self._db) as uow:
+            users = UserRepository(uow.session)
+            user = await users.find_by_identifier(identifier)
+            if user is None:
+                raise NotFound("用户", identifier)
+            memberships = OrganizationMembershipRepository(uow.session)
+            if await memberships.get(organization_id, user.id) is not None:
+                raise DomainError(
+                    Errors.VALIDATION_FAILED, f"{identifier} 已经是该组织成员"
+                )
+            membership = OrganizationMembership(
+                organization_id=organization_id,
+                user_id=user.id,
+                role=role,
+                created_at=self._clock.now(),
+            )
+            memberships.add(membership)
+            await uow.commit()
+        return membership
+
+    async def set_org_member_role(
+        self, organization_id: Id, user_id: Id, role: OrgRole
+    ) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await OrganizationMembershipRepository(uow.session).set_role(
+                organization_id, user_id, role
+            )
+            await uow.commit()
+
+    async def remove_org_member(self, organization_id: Id, user_id: Id) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await OrganizationMembershipRepository(uow.session).remove(
+                organization_id, user_id
+            )
+            await uow.commit()
+
+    async def create_workspace(
+        self, *, organization_id: Id, owner_id: Id, slug: str, name: str
+    ) -> Workspace:
+        """建项目，并把创建者设为项目 owner。"""
+        async with UnitOfWork(self._db) as uow:
+            workspaces = WorkspaceRepository(uow.session)
+            if await workspaces.get_by_slug(slug) is not None:
+                raise DomainError(Errors.VALIDATION_FAILED, f"项目标识 {slug} 已存在")
+            workspace = Workspace(
+                id=new_id("workspace"),
+                organization_id=organization_id,
+                slug=slug,
+                name=name,
+                created_at=self._clock.now(),
+            )
+            workspaces.add(workspace)
+            await uow.session.flush()
+            MembershipRepository(uow.session).add(
+                Membership(
+                    workspace_id=workspace.id,
+                    user_id=owner_id,
+                    role=WorkspaceRole.OWNER,
+                    tenant_scope="all",
+                    created_at=self._clock.now(),
+                )
+            )
+            await uow.commit()
+        return workspace
+
+    # -- 邀请 ----------------------------------------------------------------
+
+    #: 邀请链接/记录的有效期
+    INVITATION_TTL_DAYS = 14
+
+    async def invite_to_organization(
+        self, *, organization_id: Id, email: str, role: OrgRole, invited_by: Id
+    ) -> Invitation:
+        """按邮箱邀请。账号已存在就**立即**加入；否则留 pending 等首次登录时接受。"""
+        normalized = email.strip().lower()
+        if not normalized or "@" not in normalized:
+            raise DomainError(Errors.VALIDATION_FAILED, "请填写合法邮箱")
+
+        async with UnitOfWork(self._db) as uow:
+            users = UserRepository(uow.session)
+            existing_user = await users.find_by_identifier(normalized)
+            memberships = OrganizationMembershipRepository(uow.session)
+            if existing_user is not None and await memberships.get(
+                organization_id, existing_user.id
+            ):
+                raise DomainError(Errors.VALIDATION_FAILED, f"{normalized} 已经是组织成员")
+
+            invitations = InvitationRepository(uow.session)
+            if await invitations.find_pending(organization_id, normalized) is not None:
+                raise DomainError(Errors.VALIDATION_FAILED, f"{normalized} 已有待接受的邀请")
+
+            now = self._clock.now()
+            # 已有账号时邀请当场生效——返回值必须与落库状态一致，否则调用方看到的是 pending
+            auto_accepted = existing_user is not None
+            invitation = Invitation(
+                id=new_id("invitation"),
+                organization_id=organization_id,
+                email=normalized,
+                role=role,
+                status="accepted" if auto_accepted else "pending",
+                invited_by=invited_by,
+                created_at=now,
+                expires_at=now + timedelta(days=self.INVITATION_TTL_DAYS),
+                accepted_at=now if auto_accepted else None,
+            )
+            invitations.add(invitation)
+
+            if existing_user is not None:
+                memberships.add(
+                    OrganizationMembership(
+                        organization_id=organization_id,
+                        user_id=existing_user.id,
+                        role=role,
+                        created_at=now,
+                    )
+                )
+            await uow.commit()
+        return invitation
+
+    async def list_invitations(self, organization_id: Id) -> Sequence[Invitation]:
+        async with UnitOfWork(self._db) as uow:
+            return list(
+                await InvitationRepository(uow.session).list_for_organization(organization_id)
+            )
+
+    async def revoke_invitation(self, invitation_id: Id) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await InvitationRepository(uow.session).revoke(invitation_id)
+            await uow.commit()
+
+    async def accept_pending_invitations(self, user: User) -> int:
+        """登录后自动接受匹配自己邮箱的待处理邀请。
+
+        平台不开放自助注册（账号由自建 IdP 提供），所以「登录即接受」是邀请唯一的落地方式。
+        """
+        if not user.email:
+            return 0
+        now = self._clock.now()
+        accepted = 0
+        async with UnitOfWork(self._db) as uow:
+            invitations = InvitationRepository(uow.session)
+            pending = await invitations.list_pending_for_email(user.email.lower())
+            memberships = OrganizationMembershipRepository(uow.session)
+            for invitation in pending:
+                if invitation.expires_at < now:
+                    continue
+                if await memberships.get(invitation.organization_id, user.id) is None:
+                    memberships.add(
+                        OrganizationMembership(
+                            organization_id=invitation.organization_id,
+                            user_id=user.id,
+                            role=invitation.role,
+                            created_at=now,
+                        )
+                    )
+                await invitations.mark_accepted(invitation.id, now)
+                accepted += 1
+            if accepted:
+                await uow.commit()
+        return accepted
+
+    # -- 工作区成员（实现 contracts.identity.MembershipQueryPort）---------------
+
+    async def is_member(self, user_id: Id, workspace_id: Id) -> bool:
+        async with UnitOfWork(self._db) as uow:
+            return (
+                await MembershipRepository(uow.session).get(workspace_id, user_id)
+            ) is not None
+
+    async def list_members(self, workspace_id: Id) -> Sequence[MemberRef]:
+        async with UnitOfWork(self._db) as uow:
+            rows = await MembershipRepository(uow.session).list_members(workspace_id)
+        return [
+            MemberRef(
+                user_id=user.id,
+                username=user.username,
+                display_name=user.display_name,
+                email=user.email,
+                role=membership.role,
+            )
+            for membership, user in rows
+        ]
+
+    async def add_workspace_member(
+        self, workspace_id: Id, identifier: str, role: WorkspaceRole
+    ) -> MemberRef:
+        async with UnitOfWork(self._db) as uow:
+            user = await UserRepository(uow.session).find_by_identifier(identifier)
+            if user is None:
+                raise NotFound("用户", identifier)
+            memberships = MembershipRepository(uow.session)
+            if await memberships.get(workspace_id, user.id) is not None:
+                raise DomainError(Errors.VALIDATION_FAILED, f"{identifier} 已是本项目成员")
+            memberships.add(
+                Membership(
+                    workspace_id=workspace_id,
+                    user_id=user.id,
+                    role=role,
+                    tenant_scope="all",
+                    created_at=self._clock.now(),
+                )
+            )
+            await uow.commit()
+        return MemberRef(
+            user_id=user.id,
+            username=user.username,
+            display_name=user.display_name,
+            email=user.email,
+            role=role,
+        )
+
+    async def set_workspace_member_role(
+        self, workspace_id: Id, user_id: Id, role: WorkspaceRole
+    ) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await MembershipRepository(uow.session).set_role(workspace_id, user_id, role)
+            await uow.commit()
+        # 角色变了，旧会话里的权限快照作废
+        await self.revoke_user_sessions(user_id, "role changed")
+
+    async def remove_workspace_member(self, workspace_id: Id, user_id: Id) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await MembershipRepository(uow.session).remove(workspace_id, user_id)
+            await uow.commit()
+        await self.revoke_user_sessions(user_id, "removed from workspace")
 
     async def _resolve_workspace(
         self, workspaces: WorkspaceRepository, user_id: Id, ref: str | None

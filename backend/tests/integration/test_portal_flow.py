@@ -158,7 +158,7 @@ async def _scenario(tmp_path) -> None:
                 channel=Channel.LIVESH,
                 version_id=shadow.id,
                 workspace_id=workspace_id,
-                bound_by=owner,
+                actor_id=owner,
             )
             shadow_key = await client.post(
                 f"/api/agents/{agent.id}/deployment-keys",

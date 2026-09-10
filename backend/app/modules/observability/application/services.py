@@ -7,12 +7,16 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
-from ....contracts.asset import CredentialContext, CredentialResolverPort
+from ....contracts.asset import (
+    AttributionTargetPort,
+    CredentialContext,
+    CredentialResolverPort,
+)
 from ....contracts.common import Channel, Id, TraceOrigin
 from ....contracts.errors import DomainError, Errors, NotFound
 from ....contracts.observability import InvocationTrace
@@ -20,9 +24,17 @@ from ....persistence import UnitOfWork
 from ....persistence.database import Database
 from ....shared.clock import Clock
 from ....shared.ids import new_id
-from ..domain.models import AgentMetrics, SpanNode, SpanRecord, TraceRecord, build_span_tree
+from ..domain.attribution import AttributionSource, attribute_span
+from ..domain.models import (
+    AgentMetrics,
+    ResourceMetrics,
+    SpanNode,
+    SpanRecord,
+    TraceRecord,
+    build_span_tree,
+)
 from ..infrastructure.repositories import TraceRepository
-from ..infrastructure.sdk_event_adapter import SdkEventAdapter, group_by_trace
+from ..infrastructure.sdk_event_adapter import AdaptedTrace, SdkEventAdapter, group_by_trace
 
 MAX_EVENTS_PER_BATCH = 1000
 MAX_BATCH_BYTES = 5 * 1024 * 1024
@@ -70,11 +82,55 @@ class TraceService:
         credentials: CredentialResolverPort,
         *,
         origin: TraceOrigin = TraceOrigin.PRODUCTION,
+        attributions: AttributionTargetPort | None = None,
     ) -> None:
         self._db = database
         self._clock = clock
         self._credentials = credentials
         self._adapter = SdkEventAdapter(origin=origin)
+        self._attributions = attributions
+
+    # -- 归因 ----------------------------------------------------------------
+
+    async def _attribute(self, adapted: AdaptedTrace) -> AdaptedTrace:
+        """把 Span 归因到能力资产版本。
+
+        评测 Trace 带 `asset_version_id`（来自 Run 的冻结快照）→ `declared`；
+        生产 Trace 没带 → 回退到该资产的 LIVE 版本 → `resolved`。
+        归不上就保持 NULL——**宁可没有数据，也不要假数据**。
+        """
+        if self._attributions is None or not adapted.spans:
+            return adapted
+        trace = adapted.trace
+        targets = await self._attributions.attribution_targets(
+            workspace_id=trace.workspace_id,
+            asset_id=trace.asset_id,
+            version_id=trace.asset_version_id or None,
+        )
+        if not targets:
+            return adapted
+        source: AttributionSource = "declared" if trace.asset_version_id else "resolved"
+        spans = []
+        for span in adapted.spans:
+            hit = attribute_span(
+                span_kind=span.kind.value,
+                name=span.name,
+                attributes=span.attributes,
+                targets=targets,
+                source=source,
+            )
+            if hit is None:
+                spans.append(span)
+                continue
+            spans.append(
+                replace(
+                    span,
+                    resource_asset_id=hit.asset_id,
+                    resource_version_id=hit.version_id,
+                    resource_attribution=hit.source,
+                )
+            )
+        return replace(adapted, spans=tuple(spans))
 
     # -- 上报 ----------------------------------------------------------------
 
@@ -114,6 +170,7 @@ class TraceService:
             if adapted is None:
                 rejected.append((external_trace_id, Errors.INGEST_MALFORMED_EVENT.code))
                 continue
+            adapted = await self._attribute(adapted)
             async with UnitOfWork(self._db) as uow:
                 trace_id, fresh, touched = await TraceRepository(uow.session).upsert(
                     adapted.trace, adapted.spans
@@ -195,6 +252,54 @@ class TraceService:
             spans = list(await TraceRepository(uow.session).spans_for(trace_id))
         return build_span_tree(spans)
 
+    async def resource_metrics(
+        self,
+        *,
+        workspace_id: Id,
+        resource_asset_id: Id,
+        resource_version_id: Id,
+        kind: str,
+        window_hours: int = 24,
+        consumer_asset_ids: Sequence[Id] = (),
+    ) -> ResourceMetrics:
+        """能力资产版本的用量与质量。数据来源是**已归因的 Span**，不是 Trace 聚合。"""
+        since = self._clock.now() - timedelta(hours=window_hours)
+        async with UnitOfWork(self._db) as uow:
+            repo = TraceRepository(uow.session)
+            spans = list(
+                await repo.resource_version_spans(workspace_id, resource_version_id, since)
+            )
+            coverage = (0, 0)
+            metric_name, span_kind = _SUCCESS_METRIC_BY_KIND.get(kind, (None, ""))
+            if metric_name and consumer_asset_ids:
+                coverage = await repo.attribution_coverage(
+                    workspace_id, resource_asset_id, consumer_asset_ids, span_kind, since
+                )
+
+        invocations = len(spans)
+        # Span 的终态字面量是 `ok` / `error`（见 domain.models.SpanStatus），不是 `success`。
+        errors = sum(1 for span in spans if span.status == "error")
+        successes = sum(1 for span in spans if span.status == "ok")
+        durations = [
+            span.duration_ms for span in spans if span.duration_ms is not None
+        ]
+        cost = sum((span.usage.cost.amount for span in spans), Decimal("0"))
+        attributed, candidates = coverage
+        return ResourceMetrics(
+            asset_id=resource_asset_id,
+            version_id=resource_version_id,
+            window_hours=window_hours,
+            kind=kind,
+            invocations=invocations,
+            error_count=errors,
+            error_rate=(errors / invocations) if invocations else 0.0,
+            p95_latency_ms=_percentile(durations, 95),
+            cost_usd=cost,
+            success_metric=metric_name,
+            success_rate=(successes / invocations) if invocations and metric_name else None,
+            attribution_coverage=(attributed / candidates) if candidates else None,
+        )
+
     async def agent_metrics(
         self,
         workspace_id: Id,
@@ -219,6 +324,14 @@ class TraceService:
             total_cost_usd=cost if isinstance(cost, Decimal) else Decimal(str(cost)),
             error_count=errors,
         )
+
+
+#: 能力资产 kind → 该类资源的成功率口径名 + 对应的 Span 类型。
+_SUCCESS_METRIC_BY_KIND: Mapping[str, tuple[str, str]] = {
+    "mcp": ("tool_success_rate", "tool"),
+    "knowledge_base": ("retriever_success_rate", "retriever"),
+    "skill": ("skill_completion_rate", "agent"),
+}
 
 
 def _percentile(values: Sequence[int], percentile: int) -> int | None:

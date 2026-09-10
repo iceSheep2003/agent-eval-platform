@@ -31,6 +31,7 @@ from ....contracts.common import (
 from ....contracts.dataset import SampleReaderPort, SampleRef
 from ....contracts.execution import (
     ChannelInvocation,
+    RunRef,
     InvokeEvent,
     InvokeResult,
     TrialRef,
@@ -192,8 +193,13 @@ class RunService:
         concurrency: int = 1,
         cost_budget_usd: float = 0.0,
         tenant_scope: Sequence[Id] | None = None,
+        binding_overrides: Mapping[Id, Id] | None = None,
     ) -> Run:
-        """冻结三件套：被测版本 + 数据集版本 + 策略快照。之后不可改。"""
+        """冻结四件套：被测版本 + 数据集版本 + 策略快照 + 引用快照。之后不可改。
+
+        `binding_overrides` 是能力资产 A/B 的入口：同一个 Agent 版本、同一份数据集，
+        只换掉某个 Skill / MCP / 知识库的版本，跑两次 Run 做对比。
+        """
         version = await self.assets.get_version_ref(asset_version_id, workspace_id)
         if version is None:
             raise NotFound("被测版本", asset_version_id)
@@ -213,6 +219,12 @@ class RunService:
         if sample_count == 0:
             raise DomainError(Errors.RUN_SUBJECT_INCOMPLETE, "数据集版本里没有样本")
 
+        # 引用快照：把「跟随通道」解析成具体版本并冻住。此后资源晋级不影响这个 Run。
+        overrides = dict(binding_overrides or {})
+        binding_snapshot = dict(
+            await self.assets.resolve_bindings(asset_version_id, workspace_id, overrides)
+        )
+
         run = Run(
             id=new_id("run"),
             workspace_id=workspace_id,
@@ -222,6 +234,8 @@ class RunService:
             subject_version_id=version.id,
             dataset_version_id=dataset_version_id,
             template_snapshot=snapshot_to_dict(snapshot),
+            binding_snapshot=binding_snapshot,
+            binding_overrides=overrides,
             tenant_scope=tuple(tenant_scope) if tenant_scope else "all",
             status=RunStatus.QUEUED,
             stage=RunStage.PROVISIONING,
@@ -274,6 +288,49 @@ class RunService:
         if trial is None:
             raise NotFound("Trial", trial_id)
         return trial
+
+    async def get_run_ref(self, run_id: Id, workspace_id: Id) -> RunRef | None:
+        """实现 `contracts.execution.RunQueryPort`。"""
+        async with UnitOfWork(self._db) as uow:
+            run = await RunRepository(uow.session).get(run_id, workspace_id)
+            if run is None:
+                return None
+            result = await RunResultRepository(uow.session).get(run_id)
+        return self._to_run_ref(run, result)
+
+    async def find_gate_run(
+        self, version_id: Id, stage: EvaluationStage, workspace_id: Id
+    ) -> RunRef | None:
+        """该版本最近一次「该阶段 + 已完成 + 带门禁判定」的 Run。"""
+        async with UnitOfWork(self._db) as uow:
+            runs = await RunRepository(uow.session).list_for_version(workspace_id, version_id)
+            for run in runs:
+                if run.status is not RunStatus.COMPLETED:
+                    continue
+                snapshot = snapshot_from_dict(run.template_snapshot)
+                if snapshot.stage is not stage:
+                    continue
+                result = await RunResultRepository(uow.session).get(run.id)
+                if result is None or result.gate_decision is None:
+                    continue
+                return self._to_run_ref(run, result)
+        return None
+
+    @staticmethod
+    def _to_run_ref(run: Run, result: RunResult | None) -> RunRef:
+        snapshot = snapshot_from_dict(run.template_snapshot)
+        return RunRef(
+            id=run.id,
+            workspace_id=run.workspace_id,
+            name=run.name,
+            subject_asset_id=run.subject_asset_id,
+            subject_version_id=run.subject_version_id,
+            dataset_version_id=run.dataset_version_id,
+            stage=snapshot.stage,
+            status=run.status,
+            gate_decision=dict(result.gate_decision) if result and result.gate_decision else None,
+            total_trials=run.total_trials,
+        )
 
     async def get_trial_ref(self, trial_id: Id, workspace_id: Id) -> TrialRef | None:
         """实现 `contracts.execution.TrialQueryPort`：给回流提供只读投影。"""
@@ -456,6 +513,14 @@ class ExecutionHandlers:
             "__entrypoint__": version.entrypoint,
             "input": trial.instruction,
         }
+        # 能力资产走**冻结快照**，不重新解析：资源晋级不该改变这个 Run 的结果。
+        capabilities: dict[Id, dict[str, Any]] = {}
+        for provider_asset_id, provider_version_id in (run.binding_snapshot or {}).items():
+            ref = await self.assets.get_version_ref(provider_version_id, workspace_id)
+            if ref is not None:
+                capabilities[provider_asset_id] = dict(ref.spec)
+        if capabilities:
+            payload["__capabilities__"] = capabilities
         ctx = RunContext(
             run_id=run_id,
             trial_id=trial_id,
@@ -466,6 +531,13 @@ class ExecutionHandlers:
             timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
             cost_budget_usd=float(run.cost_budget_usd),
         )
+        # 能力资产走**冻结快照**，不重新解析：资源晋级不该改变这个 Run 的结果。
+        capabilities: dict[Id, dict[str, Any]] = {}
+        for provider_asset_id, provider_version_id in (run.binding_snapshot or {}).items():
+            ref = await self.assets.get_version_ref(provider_version_id, workspace_id)
+            if ref is not None:
+                capabilities[provider_asset_id] = dict(ref.spec)
+
         handle = await self.runtime.provision(
             RuntimeSpec(
                 asset_id=version.asset_id,
@@ -473,6 +545,7 @@ class ExecutionHandlers:
                 workspace_id=workspace_id,
                 entrypoint=version.entrypoint,
                 spec=version.spec,
+                capabilities=capabilities,
             ),
             ctx,
         )

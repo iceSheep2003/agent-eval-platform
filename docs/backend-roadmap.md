@@ -9,12 +9,19 @@
 
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
-| **M0** | 骨架 + 认证 + 权限 + 队列基线 + Alembic | ✅ 完成（84 tests） |
+| **M0** | 骨架 + 认证 + 权限 + 队列基线 + Alembic | ✅ 完成（86 tests） |
 | **M1** | SDK 上报闭环（asset + observability + ingest） | ✅ 完成 |
 | **M2** | 数据集 + 评测策略 | ✅ 完成（模型见 [backend-dataset.md](backend-dataset.md)） |
 | **M3** | 评测执行闭环（Run/Trial/Worker/评分/门禁） | ✅ 完成（82 tests） |
-| **M4** | 证据回流 + 前端接真数据 | ✅ 完成（84 tests） |
-| **M5** | 发布控制（P1） | ⬜ 未开始 |
+| **M4** | 证据回流 + 前端接真数据 | ✅ 完成（86 tests） |
+| **M5** | 发布控制（P1） | ✅ 完成（86 tests） |
+| **N1** | 能力资产管理（Skill / MCP / 知识库） | ✅ 完成（设计见 [backend-capability-assets.md](backend-capability-assets.md)） |
+| **N2** | 能力资产引用关系（`asset_binding` + Run 绑定冻结） | ✅ 完成 |
+| **N3** | 能力资产数据回流（Span 归因 + 质量读模型） | ✅ 完成（118 tests） |
+| **N4** | 能力资产迭代（A/B Run + 晋级 UI） | ⬜ 未开始 |
+
+> N1–N4 是「能力资产（Skill / MCP / 知识库）」这条线，与 M0–M5 的 Agent 主线并行。
+> `binding_overrides`（A/B 的入口）已在 N2 随 Run 冻结一起落地，N4 只剩提案与晋级 UI。
 
 **M1 拆分**：
 - **M1a** — `asset` 模块 + 凭证签发 + 默认租户 + 控制台接口 ✅ **完成**
@@ -69,7 +76,7 @@ ALEMBIC_MODULE=asset .venv/bin/python -m alembic -c backend/alembic.ini \
 | # | 事项 | 触发条件 |
 | --- | --- | --- |
 | 5 | `ObjectStorePort` + S3 适配器 | 迁 k8s 时（本地 FS 不共享） |
-| 6 | OIDC 登录（`AuthProviderPort`） | 自建 IdP 就绪后 |
+| 6 | OIDC 登录（`AuthProviderPort`）与**高风险操作的 re-auth ticket** | 自建 IdP 就绪后；当前 `confirm=true` 是占位 |
 | 7 | 租户管理 UI 与同步接口 | M4 |
 | 8 | 外部 MQ 派发器 | 队列深度成为实测瓶颈时 |
 
@@ -92,11 +99,17 @@ ALEMBIC_MODULE=asset .venv/bin/python -m alembic -c backend/alembic.ini \
 | 数据集 stages | **硬约束**：策略绑定时校验 `template.stage ∈ dataset.stages` | 防止宽松样本污染发布门禁 |
 | 数据集混合 | 一个版本**允许**混合 `task_shape` / `protocol`，比较时分组下钻 | 强求同质会逼出「一个数据集拆成好几个」的伪需求 |
 | 跨租户样本 | **可以直接共用** | 复用率高；代价是评测时注意样本来源 |
+| 账号/角色/项目/组织 | **对齐 Langfuse 三层**：Organization → Workspace(项目) → Membership；组织角色 owner/admin/member/viewer 只管成员与项目，项目角色管评测资产，两套不混用 | 负责人等字段必须选账号，不能收字符串 |
 | 前端 | **`frontend-pro` 是唯一前端**，已并入本仓库（不再是嵌套 git 仓库）；旧 `frontend/` 已移除，其 6 份设计文档移至 `docs/legacy-frontend/` | 后端、SDK、控制台同一处，不再跨仓库同步 |
 | 路径前缀 | `/api/*` 兼容面 + `/api/v1/*` 别名；`/v1/*` 机器面 | 前端与 `register.py` 已在用 `/api/*` |
 | 队列 | 事务性 Outbox 先行，MQ 只作派发优化 | 业务写入与入队必须原子 |
 | 探针 | `/api/live`（liveness，不碰 DB）+ `/api/health`（readiness，查 DB） | DB 抖动不该重启 pod |
 | **Score 归属** | **execution**（表 `run_score`），不是 observability | Score 是 Trial 的产物，与 Run/Trial 同生命周期；拆开会造成写读两端来回穿模块边界 |
+| 能力资产「公共」范围 | **工作区内共享** | 跨工作区公共库会让隔离模型变复杂；`Asset.kind` 已有，表结构零改动 |
+| 引用解析方式 | **`channel` 与 `pinned` 都支持**，默认 `channel` | 跟随通道时资源升级不必重冻 Agent；Run 启动时解析一次并冻结，历史仍可复现 |
+| 能力资产评测方式 | **恒为「通过宿主 Agent」**，`Run.subject_kind` 保持 `agent` | 能力资产没有 entrypoint，Runtime 起不来；A/B 走 `binding_overrides` |
+| 写引用的接口位置 | `POST /agents/{id}/capabilities`，**不是** `/assets/{id}/bindings` | `asset:bind` 是 owner-scoped，判定资源必须是消费方 Agent |
+| 归因方式 | 靠**绑定声明 + Span 名称**匹配，SDK 事件形状不变 | SDK 已在跑；归因不上就留 NULL，用 `attribution_coverage` 自检规则失效 |
 
 ---
 

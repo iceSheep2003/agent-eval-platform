@@ -1,0 +1,63 @@
+/* biome-ignore-all lint/correctness/noUnknownPseudoClass: CSS Modules global selectors target Ant Design internals. */
+/* biome-ignore-all lint/style/noDescendingSpecificity: Component sections intentionally scope repeated semantic elements. */
+.overview { display: flex; min-height: 70px; align-items: center; gap: 30px; padding: 0 22px; border: 1px solid #e6ebf2; border-radius: 14px; background: #fff; }
+.overview > div { display: flex; align-items: baseline; gap: 10px; }
+.overview span { color: #718096; font-size: 11px; }
+.overview strong { color: #172033; font-size: 21px; }
+.overview > i { width: 1px; height: 30px; background: #edf1f6; }
+.workbench { display: grid; grid-template-columns: 270px minmax(0,1fr); min-height: 650px; margin-top: 16px; overflow: hidden; border: 1px solid #e6ebf2; border-radius: 14px; background: #fff; }
+.lifecycle { padding: 18px 10px; border-right: 1px solid #e8edf3; background: #fbfcfe; }
+.lifecycle > header { display: flex; flex-direction: column; gap: 5px; padding: 5px 12px 17px; }
+.lifecycle > header small { color: #8ca0be; font-size: 8px; font-weight: 700; letter-spacing: .14em; }
+.lifecycle button { position: relative; display: flex; width: 100%; align-items: center; gap: 11px; padding: 13px 10px; border: 0; border-radius: 10px; color: #344054; background: transparent; cursor: pointer; text-align: left; }
+.lifecycle button:hover,.lifecycle button.active { background: #edf3ff; }
+.lifecycle button > span { z-index: 1; display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; border: 1px solid #dfe7f5; border-radius: 9px; color: #6481c8; background: #fff; }
+.lifecycle button.active > span { border-color: #bfd0fb; color: #416bd3; }
+.lifecycle button > div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.lifecycle button small { color: #8a97a9; font-size: 9px; }
+.lifecycle button b { color: #6f7f96; font-size: 11px; }
+.lifecycle button > i { position: absolute; top: 45px; bottom: -7px; left: 25px; width: 1px; background: #dfe6f0; }
+.canvas { min-width: 0; padding: 0 24px 24px; background: #fafcff; }
+.toolbar { display: flex; min-height: 82px; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #e8edf3; }
+.viewTitle { margin: 0 0 4px; color: #172033; }
+.policyGrid,.dimensionGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; padding-top: 20px; }
+.policyCard,.dimensionGrid article { overflow: hidden; border: 1px solid #e5eaf1; border-radius: 13px; background: #fff; box-shadow: 0 5px 18px rgba(41,63,103,.035); }
+.policyCard > header { padding: 17px 18px; border-bottom: 1px solid #edf1f6; }
+.policyCard > header > div { display: flex; align-items: center; justify-content: space-between; }
+.policyCard > header small { color: #8491a5; font-size: 9px; }
+.policyCard h3 { margin: 13px 0 5px; color: #253047; font-size: 15px; }
+.policyCard p { margin: 0; color: #718096; font-size: 10px; }
+.policyCard > section { padding: 14px 18px; border-bottom: 1px solid #edf1f6; }
+.policyCard > section > span { display: block; margin-bottom: 9px; color: #8491a5; font-size: 9px; font-weight: 600; text-transform: uppercase; }
+.gate { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 12px; margin-top: 8px; }
+.gate small { overflow: hidden; color: #5f6d82; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.gate strong { color: #344054; font-size: 10px; }
+.gate :global(.ant-progress) { grid-column: 1 / -1; }
+.policyCard footer { display: flex; align-items: center; justify-content: space-between; padding: 11px 18px; color: #718096; background: #fcfdff; font-size: 10px; }
+.dimensionGrid article { padding: 18px; }
+.dimensionGrid article header { display: flex; align-items: flex-start; justify-content: space-between; }
+.dimensionGrid h3 { margin: 5px 0 12px; color: #253047; font-size: 14px; }
+.dimensionGrid small { color: #8491a5; font-size: 9px; }
+.dimensionGrid header > strong { color: #27416d; font-size: 22px; }
+.dimensionGrid footer { display: flex; justify-content: space-between; color: #8491a5; font-size: 9px; }
+@media (max-width: 980px) { .workbench { grid-template-columns: 1fr; } .lifecycle { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid #e8edf3; } .lifecycle > header { min-width: 170px; } .lifecycle button { min-width: 190px; } .lifecycle button > i { display: none; } }
+@media (max-width: 700px) { .overview { gap: 14px; overflow-x: auto; } .policyGrid,.dimensionGrid { grid-template-columns: 1fr; } .toolbar { align-items: flex-start; flex-direction: column; justify-content: center; padding-block: 16px; } }
+.drawerTitle { display: flex; flex-direction: column; gap: 3px; }
+.drawerTitle small { color: #7890b4; font-size: 8px; letter-spacing: .14em; }
+.drawerTitle strong { color: #172033; font-size: 15px; }
+.drawerFooter { display: flex; justify-content: flex-end; gap: 8px; }
+.editorIntro,.createHint { display: flex; align-items: flex-start; gap: 12px; padding: 14px; border: 1px solid #dae5f8; border-radius: 12px; color: #4269d0; background: #f5f8ff; }
+.editorIntro > span { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #fff; }
+.editorIntro strong { color: #2d4169; }
+.editorIntro p { margin: 4px 0 0; color: #718096; font-size: 10px; line-height: 1.6; }
+.editorForm > section { margin-top: 22px; padding-top: 20px; border-top: 1px solid #e8edf3; }
+.editorForm > section > header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; }
+.editorForm > section > header b { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 7px; color: #4269d0; background: #edf3ff; font-size: 9px; }
+.editorForm > section > header div { display: flex; flex-direction: column; gap: 3px; }
+.editorForm > section > header small { color: #8491a5; font-size: 9px; }
+.formGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.thresholdRow { display: grid; grid-template-columns: 1fr 110px; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid #edf1f6; }
+.thresholdRow > div { display: flex; flex-direction: column; gap: 4px; }
+.thresholdRow small { color: #8491a5; font-size: 9px; }
+.thresholdRow :global(.ant-form-item) { margin: 0; }
+.createHint { margin-bottom: 20px; color: #60718c; font-size: 11px; line-height: 1.6; }

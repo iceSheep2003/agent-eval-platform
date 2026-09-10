@@ -1,0 +1,134 @@
+/* biome-ignore-all lint/correctness/noUnknownPseudoClass: CSS Modules intentionally scopes Ant Design internals. */
+/* biome-ignore-all lint/style/noDescendingSpecificity: Dashboard sections intentionally refine shared semantic elements. */
+.metrics :global(.ant-pro-card) {
+  min-width: 190px;
+  border: 1px solid #e5e9f0;
+  box-shadow: 0 3px 12px rgba(38, 43, 55, 0.025);
+}
+
+.assetSummary {
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid #e2e6ed;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.assetSummary > header {
+  display: flex;
+  min-height: 76px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 20px;
+  border-bottom: 1px solid #e8ebf0;
+  background: linear-gradient(100deg, #fafbfe, #fff 60%);
+}
+
+.assetSummary header span {
+  color: #7a8290;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.assetSummary h2 {
+  margin: 4px 0 0;
+  color: #29303b;
+  font-size: 17px;
+}
+.assetSummary > header p {
+  margin: 0;
+  color: #7c8490;
+  font-size: 12px;
+}
+.assetSummary > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.assetSummary article {
+  display: grid;
+  min-height: 130px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 18px 20px;
+  border-right: 1px solid #e8ebf0;
+}
+
+.assetSummary article:last-child {
+  border-right: 0;
+}
+.assetSummary article > span {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 10px;
+  font-size: 17px;
+}
+.assetSummary article > div {
+  min-width: 0;
+}
+.assetSummary article h3 {
+  margin: 0;
+  color: #2d3540;
+  font-size: 15px;
+}
+.assetSummary article p {
+  margin: 5px 0 8px;
+  color: #727b88;
+  font-size: 11px;
+}
+.assetSummary article small {
+  color: #8b939f;
+  font-size: 10px;
+}
+.assetSummary article > button {
+  grid-column: 2;
+  width: max-content;
+  margin: -5px 0 0 -12px;
+  color: #536174;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.55fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+.grid > :global(.ant-pro-card) {
+  border: 1px solid #e5e9f0;
+}
+.capabilities {
+  width: 100%;
+}
+.capabilities > div {
+  width: 100%;
+}
+.capabilities span {
+  display: flex;
+  justify-content: space-between;
+}
+
+@media (max-width: 1000px) {
+  .assetSummary > div,
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .assetSummary article {
+    border-right: 0;
+    border-bottom: 1px solid #e8ebf0;
+  }
+  .assetSummary article:last-child {
+    border-bottom: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .assetSummary > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

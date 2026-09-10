@@ -85,6 +85,11 @@ class LocalSandboxRuntime:
         # 按签名过滤：对话调用会带上 `messages`，而多数被测函数只接受 `input`，
         # 全量透传会直接 TypeError。带 **kwargs 的函数仍然拿到全部键。
         arguments = _public_arguments(target, payload)
+        # 能力资产按需注入：被测函数没声明 `capabilities` 形参就不传，
+        # 否则现有 Agent 的签名会被这个新参数打破。
+        capabilities = payload.get("__capabilities__")
+        if capabilities and "capabilities" in inspect.signature(target).parameters:
+            arguments["capabilities"] = capabilities
         started = time.perf_counter()
         try:
             if inspect.iscoroutinefunction(target):

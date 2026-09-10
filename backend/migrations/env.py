@@ -30,6 +30,7 @@ import backend.app.modules.dataset.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.evaluation.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.execution.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.observability.infrastructure.tables  # noqa: E402,F401
+import backend.app.modules.delivery.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.portal.infrastructure.tables  # noqa: E402,F401
 from backend.app.settings import Settings  # noqa: E402
 
@@ -39,8 +40,9 @@ MODULE_PREFIXES = (
     "dataset",
     "evaluation",
     "run",
-    "platform",
     "obs",
+    "delivery",
+    "platform",
     "portal",
 )
 

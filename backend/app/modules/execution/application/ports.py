@@ -24,9 +24,17 @@ class RuntimeSpec:
     entrypoint: str | None
     artifact_ref: str | None = None
     spec: Mapping[str, Any] = None  # type: ignore[assignment]
+    #: 已解析的能力资产版本：`provider_asset_id → provider version spec`。
+    #: 来自 `Run.binding_snapshot`（冻结值），**不是**实时解析——历史 Run 必须可复现。
+    capabilities: Mapping[Id, Mapping[str, Any]] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "spec", dict(self.spec or {}))
+        object.__setattr__(
+            self,
+            "capabilities",
+            {key: dict(value) for key, value in (self.capabilities or {}).items()},
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,12 +16,15 @@ from sqlalchemy import text
 
 from .api import CONSOLE_PREFIXES, MACHINE_PREFIX
 from .api import errors as api_errors
+from .api.agents_view import router as agents_view_router
 from .api.overview import router as overview_router
 from .api.regression import router as regression_router
 from .container import Container
 from .contracts import CONTRACT_VERSION
+from .modules.asset.api.capability_router import router as capability_router
 from .modules.asset.api.router import router as asset_router
 from .modules.dataset.api.router import router as dataset_router
+from .modules.delivery.api.router import router as delivery_router
 from .modules.evaluation.api.router import router as evaluation_router
 from .modules.execution.api.gateway import router as gateway_router
 from .modules.execution.api.router import router as execution_router
@@ -36,10 +39,13 @@ CONSOLE_ROUTERS = (
     auth_router,
     workspace_router,
     asset_router,
+    capability_router,
     dataset_router,
     evaluation_router,
     execution_router,
     trace_router,
+    delivery_router,
+    agents_view_router,
     overview_router,
     regression_router,
     portal_router,

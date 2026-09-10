@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect
@@ -25,6 +26,7 @@ import backend.app.modules.evaluation.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.execution.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.observability.infrastructure.tables  # noqa: E402,F401
 import backend.app.modules.portal.infrastructure.tables  # noqa: E402,F401
+import backend.app.modules.delivery.infrastructure.tables  # noqa: E402,F401
 
 
 def test_migrations_match_models(tmp_path, monkeypatch) -> None:

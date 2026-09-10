@@ -26,12 +26,65 @@ class UserRow(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
 
 
-class WorkspaceRow(Base, TimestampMixin):
-    __tablename__ = "identity_workspace"
+class OrganizationRow(Base, TimestampMixin):
+    __tablename__ = "identity_organization"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class OrganizationMembershipRow(Base, TimestampMixin):
+    __tablename__ = "identity_organization_membership"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "user_id", name="uq_org_membership"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("identity_organization.id"), nullable=False, index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("identity_user.id"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    organization: Mapped["OrganizationRow"] = relationship()
+    user: Mapped["UserRow"] = relationship()
+
+
+class InvitationRow(Base, TimestampMixin):
+    __tablename__ = "identity_invitation"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "email", name="uq_invitation_email"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("identity_organization.id"), nullable=False, index=True
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="member")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    invited_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    organization: Mapped["OrganizationRow"] = relationship()
+
+
+class WorkspaceRow(Base, TimestampMixin):
+    __tablename__ = "identity_workspace"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    #: 项目必须属于一个组织
+    organization_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("identity_organization.id"), nullable=False, index=True
+    )
+    slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    organization: Mapped["OrganizationRow"] = relationship()
 
 
 class TenantRow(Base, TimestampMixin):

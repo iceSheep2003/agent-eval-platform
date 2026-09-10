@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal, Protocol, Sequence, runtime_checkable
 
 from ..common import Id, WorkspaceRole
 
@@ -23,6 +23,13 @@ from ..common import Id, WorkspaceRole
 
 class Permission(StrEnum):
     """权限点常量。命名 `<resource>:<action>`，与架构文档 §5.2 矩阵一一对应。"""
+
+    # organization
+    ORG_READ = "org:read"
+    ORG_SETTINGS_WRITE = "org:settings:write"
+    ORG_MEMBER_MANAGE = "org:member:manage"
+    WORKSPACE_CREATE = "workspace:create"
+    WORKSPACE_DELETE = "workspace:delete"
 
     # workspace / member
     WORKSPACE_READ = "workspace:read"
@@ -39,6 +46,10 @@ class Permission(StrEnum):
     ASSET_VERSION_CREATE = "asset:version:create"
     ASSET_CREDENTIAL_CREATE = "asset:credential:create"
     ASSET_CREDENTIAL_REVOKE = "asset:credential:revoke"
+    #: 把能力资产（Skill / MCP / 知识库）引用到自己的 Agent 上。
+    #: 判定资源是**消费方 Agent**（owner-scoped），不是被引用的资源——
+    #: 否则「我能改自己的 Agent」和「我能用别人的 Skill」会纠缠在一起。
+    ASSET_BIND = "asset:bind"
 
     # dataset
     DATASET_READ = "dataset:read"
@@ -159,6 +170,7 @@ class ActorContext:
     user_id: Id
     display_name: str
     email: str | None
+    organization_id: Id | None
     workspace_id: Id
     workspace_name: str
     role: WorkspaceRole | None
@@ -176,6 +188,26 @@ class AuthContextPort(Protocol):
     async def resolve(self, raw_token: str, workspace_ref: str | None) -> ActorContext | None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class MemberRef:
+    """工作区成员的只读投影。`owner_id` 这类字段要用它来校验，而不是收任意字符串。"""
+
+    user_id: Id
+    username: str
+    display_name: str
+    email: str | None
+    role: WorkspaceRole
+
+
+@runtime_checkable
+class MembershipQueryPort(Protocol):
+    """由 identity 实现；asset 登记负责人时校验「这个人确实是本工作区成员」。"""
+
+    async def is_member(self, user_id: Id, workspace_id: Id) -> bool: ...
+
+    async def list_members(self, workspace_id: Id) -> Sequence[MemberRef]: ...
+
+
 @runtime_checkable
 class TenantProvisioningPort(Protocol):
     """由 identity 实现；asset 签发 SDK 密钥时按需取用租户。
@@ -188,6 +220,8 @@ class TenantProvisioningPort(Protocol):
 
 __all__ = [
     "ActorContext",
+    "MemberRef",
+    "MembershipQueryPort",
     "AuthorizerPort",
     "AuthContextPort",
     "Decision",

@@ -10,10 +10,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping, Sequence
 
-from ....contracts.asset import AssetRef, AssetVersionRef, CredentialContext
+from ....contracts.asset import (
+    AssetRef,
+    AssetVersionRef,
+    CapabilityAttributionRef,
+    CredentialContext,
+)
 from ....contracts.common import AssetKind, Channel, CredentialKind, VersionLifecycle
 from ....contracts.errors import DomainError, Errors, NotFound
-from ....contracts.identity import TenantProvisioningPort
+from ....contracts.identity import MembershipQueryPort, TenantProvisioningPort
 from ....persistence import UnitOfWork
 from ....persistence.database import Database
 from ....shared.clock import Clock
@@ -21,13 +26,17 @@ from ....shared.ids import new_id
 from ....shared.secrets import hash_secret, last_four, new_secret
 from ..domain import spec as spec_registry
 from ..domain.models import (
+    Artifact,
     Asset,
+    AssetBinding,
     AssetVersion,
     ChannelBinding,
     Credential,
+    ResolveMode,
     default_version_label,
 )
 from ..infrastructure.repositories import (
+    AssetBindingRepository,
     AssetRepository,
     AssetVersionRepository,
     ChannelBindingRepository,
@@ -59,27 +68,52 @@ class AssetService:
         database: Database,
         clock: Clock,
         tenants: TenantProvisioningPort,
+        members: MembershipQueryPort,
     ) -> None:
         self._db = database
         self._clock = clock
         self._tenants = tenants
+        self._members = members
 
     # -- 查询 ----------------------------------------------------------------
 
     async def list_agents(self, workspace_id: str) -> Sequence[Asset]:
-        async with UnitOfWork(self._db) as uow:
-            return list(
-                await AssetRepository(uow.session).list_for_workspace(
-                    workspace_id, AssetKind.AGENT
-                )
-            )
+        return await self.list_assets(workspace_id, AssetKind.AGENT)
 
-    async def get_agent(self, asset_id: str, workspace_id: str) -> Asset:
+    async def get_asset_or_404(self, asset_id: str, workspace_id: str) -> Asset:
+        """四类资产通用加载。调用方需要限定 kind 时用 `_require_kind`。"""
         async with UnitOfWork(self._db) as uow:
             asset = await AssetRepository(uow.session).get(asset_id, workspace_id)
         if asset is None:
-            raise NotFound("Agent", asset_id)
+            raise NotFound("资产", asset_id)
         return asset
+
+    async def get_agent(self, asset_id: str, workspace_id: str) -> Asset:
+        """`/agents/{id}` 与资源级鉴权用。**必须是 agent**——否则 Skill 的 id 能打到 Agent 接口上。"""
+        return self._require_kind(
+            await self.get_asset_or_404(asset_id, workspace_id), AssetKind.AGENT
+        )
+
+    async def get_capability(self, asset_id: str, workspace_id: str) -> Asset:
+        """加载一个能力资产（Skill / MCP / 知识库）。Agent 走 `get_agent`。"""
+        asset = await self.get_asset_or_404(asset_id, workspace_id)
+        if not spec_registry.is_capability(asset.kind):
+            raise NotFound("能力资产", asset_id)
+        return asset
+
+    @staticmethod
+    def _require_kind(asset: Asset, kind: AssetKind) -> Asset:
+        if asset.kind is not kind:
+            raise NotFound(kind.value, asset.id)
+        return asset
+
+    async def list_assets(
+        self, workspace_id: str, kind: AssetKind | None = None
+    ) -> Sequence[Asset]:
+        async with UnitOfWork(self._db) as uow:
+            return list(
+                await AssetRepository(uow.session).list_for_workspace(workspace_id, kind)
+            )
 
     async def get_version_ref(
         self, version_id: str, workspace_id: str
@@ -98,6 +132,10 @@ class AssetService:
             entrypoint=version.spec.get("entrypoint"),  # type: ignore[arg-type]
             spec=dict(version.spec),
         )
+
+    async def channel_map(self, asset_id: str, workspace_id: str) -> Mapping[Channel, str | None]:
+        states = await self.channel_states(asset_id, workspace_id)
+        return {channel: state.version_id for channel, state in states.items()}
 
     async def version_of_channel(
         self, asset_id: str, channel: Channel, workspace_id: str
@@ -128,6 +166,34 @@ class AssetService:
             channel=credential.channel,
         )
 
+    async def bind_channel(
+        self,
+        *,
+        asset_id: str,
+        channel: Channel,
+        version_id: str | None,
+        workspace_id: str,
+        actor_id: str,
+    ) -> None:
+        """改通道指针。**不删除任何版本与证据**——回退就是改这里。"""
+        if version_id is not None:
+            version = await self.get_version_ref(version_id, workspace_id)
+            if version is None or version.asset_id != asset_id:
+                raise NotFound("版本", version_id)
+        async with UnitOfWork(self._db) as uow:
+            await ChannelBindingRepository(uow.session).upsert(
+                ChannelBinding(asset_id, channel, version_id, self._clock.now(), actor_id),
+                workspace_id,
+            )
+            await uow.commit()
+
+    async def set_version_lifecycle(
+        self, version_id: str, lifecycle: VersionLifecycle, workspace_id: str
+    ) -> None:
+        async with UnitOfWork(self._db) as uow:
+            await AssetVersionRepository(uow.session).set_lifecycle(version_id, lifecycle)
+            await uow.commit()
+
     async def get_asset(self, asset_id: str, workspace_id: str) -> AssetRef | None:
         """实现 `contracts.asset.AssetQueryPort`：只返回投影，不抛错。"""
         async with UnitOfWork(self._db) as uow:
@@ -144,13 +210,17 @@ class AssetService:
             description=asset.description,
         )
 
+    async def get_version(self, version_id: str, workspace_id: str) -> AssetVersion | None:
+        async with UnitOfWork(self._db) as uow:
+            return await AssetVersionRepository(uow.session).get(version_id, workspace_id)
+
     async def list_versions(self, asset_id: str, workspace_id: str) -> Sequence[AssetVersion]:
-        await self.get_agent(asset_id, workspace_id)
+        await self.get_asset_or_404(asset_id, workspace_id)
         async with UnitOfWork(self._db) as uow:
             return list(await AssetVersionRepository(uow.session).list_for_asset(asset_id))
 
     async def channel_states(self, asset_id: str, workspace_id: str) -> Mapping[Channel, ChannelBinding]:
-        await self.get_agent(asset_id, workspace_id)
+        await self.get_asset_or_404(asset_id, workspace_id)
         async with UnitOfWork(self._db) as uow:
             bindings = await ChannelBindingRepository(uow.session).list_for_asset(asset_id)
         by_channel = {binding.channel: binding for binding in bindings}
@@ -161,29 +231,10 @@ class AssetService:
             for channel in Channel
         }
 
-    async def bind_channel(
-        self,
-        *,
-        asset_id: str,
-        channel: Channel,
-        version_id: str,
-        workspace_id: str,
-        bound_by: str,
-    ) -> ChannelBinding:
-        """把某个版本挂到通道上。回退就是改这个指针，版本本身不删。
-
-        **只校验版本属于该 Agent**——晋级顺序与门禁由 delivery 负责；
-        在它落地前，调用方（控制台 / operator 供给接口）自己保证顺序。
-        """
+    async def list_artifacts(self, asset_id: str, workspace_id: str) -> Sequence[Artifact]:
         await self.get_agent(asset_id, workspace_id)
         async with UnitOfWork(self._db) as uow:
-            version = await AssetVersionRepository(uow.session).get(version_id, workspace_id)
-            if version is None or version.asset_id != asset_id:
-                raise NotFound("版本", version_id)
-            binding = ChannelBinding(asset_id, channel, version_id, self._clock.now(), bound_by)
-            await ChannelBindingRepository(uow.session).upsert(binding, workspace_id)
-            await uow.commit()
-        return binding
+            return list(await ArtifactRepository(uow.session).list_for_asset(asset_id))
 
     async def list_credentials(self, workspace_id: str) -> Sequence[Credential]:
         async with UnitOfWork(self._db) as uow:
@@ -207,12 +258,72 @@ class AssetService:
         `source` 携带接入方式特有的字段（github 的 repository/ref、
         package 的 artifact_id/entrypoint），由 `spec/agent.py` 校验。
         """
+        # 负责人必须是本工作区成员——它决定变更责任，不能收任意字符串
+        if not await self._members.is_member(owner_id, workspace_id):
+            raise DomainError(
+                Errors.VALIDATION_FAILED, "负责人必须是本工作区成员", owner_id=owner_id
+            )
+
         spec_body: dict[str, Any] = {"kind": AssetKind.AGENT.value, "connect_type": connect_type}
         if environment:
             spec_body["environment"] = environment
         if source:
             spec_body.update(source)
-        result = spec_registry.validator_for(AssetKind.AGENT).validate(spec_body)
+        return await self._register(
+            workspace_id=workspace_id,
+            owner_id=owner_id,
+            kind=AssetKind.AGENT,
+            name=name,
+            description=description,
+            spec=spec_body,
+            connect_type=connect_type,
+        )
+
+    async def register_capability(
+        self,
+        *,
+        workspace_id: str,
+        owner_id: str,
+        kind: AssetKind,
+        name: str,
+        description: str = "",
+        spec: Mapping[str, Any] | None = None,
+        tenant_id: str | None = None,
+    ) -> Asset:
+        """接入一个能力资产（Skill / MCP / 知识库）。
+
+        与 Agent 共用「资产 + 首个 draft 版本 + TEST 指针」的落库路径，
+        差异只有 spec 校验器与 `tenant_scope`（知识库常按租户隔离）。
+        """
+        if not spec_registry.is_capability(kind):
+            raise DomainError(Errors.VALIDATION_FAILED, f"{kind.value} 不是能力资产类型")
+        spec_body: dict[str, Any] = {"kind": kind.value, **(spec or {})}
+        return await self._register(
+            workspace_id=workspace_id,
+            owner_id=owner_id,
+            kind=kind,
+            name=name,
+            description=description,
+            spec=spec_body,
+            connect_type=None,
+            tenant_id=tenant_id,
+        )
+
+    async def _register(
+        self,
+        *,
+        workspace_id: str,
+        owner_id: str,
+        kind: AssetKind,
+        name: str,
+        description: str,
+        spec: Mapping[str, Any],
+        connect_type: str | None,
+        tenant_id: str | None = None,
+    ) -> Asset:
+        """四类资产共用的落库路径：校验 spec → 建资产 → 冻结首个版本 → 绑 TEST。"""
+        validator = spec_registry.validator_for(kind)
+        result = validator.validate(spec)
         if not result.ok:
             raise DomainError(
                 Errors.VALIDATION_FAILED,
@@ -222,7 +333,7 @@ class AssetService:
 
         async with UnitOfWork(self._db) as uow:
             assets = AssetRepository(uow.session)
-            existing = await assets.find_by_name(workspace_id, AssetKind.AGENT, name)
+            existing = await assets.find_by_name(workspace_id, kind, name)
             if existing is not None:
                 return existing
 
@@ -230,32 +341,30 @@ class AssetService:
             asset = Asset(
                 id=new_id("asset"),
                 workspace_id=workspace_id,
-                kind=AssetKind.AGENT,
+                kind=kind,
                 name=name,
                 description=description,
                 owner_id=owner_id,
                 lifecycle="draft",
                 connect_type=connect_type,  # type: ignore[arg-type]
-                tenant_scope="workspace_shared",
-                tenant_id=None,
+                tenant_scope="tenant_bound" if tenant_id else "workspace_shared",
+                tenant_id=tenant_id,
                 created_at=now,
             )
             assets.add(asset)
 
-            versions = AssetVersionRepository(uow.session)
-            validator = spec_registry.validator_for(AssetKind.AGENT)
             version = AssetVersion(
                 id=new_id("version"),
                 asset_id=asset.id,
                 workspace_id=workspace_id,
                 version_label=default_version_label(0),
-                spec=spec_body,
-                spec_digest=validator.digest(spec_body),
+                spec=dict(spec),
+                spec_digest=validator.digest(spec),
                 lifecycle=VersionLifecycle.DRAFT,
                 created_by=owner_id,
                 created_at=now,
             )
-            versions.add(version)
+            AssetVersionRepository(uow.session).add(version)
             await uow.session.flush()
 
             await ChannelBindingRepository(uow.session).upsert(
@@ -275,7 +384,7 @@ class AssetService:
         version_label: str | None = None,
     ) -> AssetVersion:
         """冻结一个不可变版本。相同内容重复提交返回既有版本，不产生新行。"""
-        asset = await self.get_agent(asset_id, workspace_id)
+        asset = await self.get_asset_or_404(asset_id, workspace_id)
         validator = spec_registry.validator_for(asset.kind)
         result = validator.validate(spec)
         if not result.ok:
@@ -304,6 +413,15 @@ class AssetService:
                 created_at=self._clock.now(),
             )
             versions.add(version)
+            await uow.session.flush()
+            # 新冻结的版本就是 TEST 候选——TEST 通道始终指向当前候选，
+            # 否则「晋级」连起点都没有。
+            await ChannelBindingRepository(uow.session).upsert(
+                ChannelBinding(
+                    asset_id, Channel.TEST, version.id, self._clock.now(), created_by
+                ),
+                workspace_id,
+            )
             await uow.commit()
         return version
 
@@ -379,6 +497,213 @@ class AssetService:
                 raise NotFound("凭证", credential_id)
             await repo.revoke(credential_id, self._clock.now())
             await uow.commit()
+
+    # -- 引用关系（Agent → 能力资产）------------------------------------------
+
+    async def bind_capability(
+        self,
+        *,
+        workspace_id: str,
+        actor_id: str,
+        consumer_asset_id: str,
+        provider_asset_id: str,
+        resolve_mode: ResolveMode = "channel",
+        provider_channel: Channel | None = None,
+        provider_version_id: str | None = None,
+        consumer_version_id: str | None = None,
+        tenant_scope: str = "workspace_shared",
+    ) -> AssetBinding:
+        """把能力资产引用到 Agent 上。同 `(consumer, provider, consumer_version)` 是 upsert。"""
+        consumer = await self.get_agent(consumer_asset_id, workspace_id)
+        provider = await self.get_capability(provider_asset_id, workspace_id)
+
+        if resolve_mode not in ("channel", "pinned"):
+            raise DomainError(Errors.VALIDATION_FAILED, f"未知的解析方式 {resolve_mode!r}")
+
+        if consumer_version_id is not None:
+            version = await self.get_version_ref(consumer_version_id, workspace_id)
+            if version is None or version.asset_id != consumer.id:
+                raise NotFound("版本", consumer_version_id)
+
+        if resolve_mode == "pinned":
+            if provider_version_id is None:
+                raise DomainError(Errors.VALIDATION_FAILED, "锁定版本模式必须提供 provider_version_id")
+            pinned = await self.get_version_ref(provider_version_id, workspace_id)
+            if pinned is None or pinned.asset_id != provider.id:
+                raise NotFound("版本", provider_version_id)
+            provider_channel = None
+        else:
+            provider_channel = provider_channel or Channel.LIVE
+            provider_version_id = None
+
+        binding = AssetBinding(
+            id=new_id("binding"),
+            workspace_id=workspace_id,
+            consumer_asset_id=consumer.id,
+            consumer_version_id=consumer_version_id,
+            provider_asset_id=provider.id,
+            provider_kind=provider.kind,
+            resolve_mode=resolve_mode,
+            provider_channel=provider_channel,
+            provider_version_id=provider_version_id,
+            tenant_scope=tenant_scope,
+            created_by=actor_id,
+            created_at=self._clock.now(),
+        )
+        async with UnitOfWork(self._db) as uow:
+            repo = AssetBindingRepository(uow.session)
+            existing = await repo.find(consumer.id, provider.id, consumer_version_id)
+            if existing is not None:
+                # upsert：同一条引用只保留一行，改配置即覆盖指针语义。
+                await repo.delete(existing.id, workspace_id)
+            repo.add(binding)
+            await uow.commit()
+        return binding
+
+    async def unbind_capability(self, binding_id: str, workspace_id: str) -> None:
+        async with UnitOfWork(self._db) as uow:
+            removed = await AssetBindingRepository(uow.session).delete(binding_id, workspace_id)
+            if not removed:
+                raise NotFound("引用", binding_id)
+            await uow.commit()
+
+    async def list_bindings_of_provider(
+        self, provider_asset_id: str, workspace_id: str
+    ) -> Sequence[AssetBinding]:
+        """影响面：这个能力资产被哪些 Agent 引用。"""
+        await self.get_capability(provider_asset_id, workspace_id)
+        async with UnitOfWork(self._db) as uow:
+            return list(await AssetBindingRepository(uow.session).list_for_provider(provider_asset_id))
+
+    async def list_bindings_of_consumer(
+        self, consumer_asset_id: str, workspace_id: str, consumer_version_id: str | None = None
+    ) -> Sequence[AssetBinding]:
+        await self.get_agent(consumer_asset_id, workspace_id)
+        async with UnitOfWork(self._db) as uow:
+            return list(
+                await AssetBindingRepository(uow.session).list_for_consumer(
+                    consumer_asset_id, consumer_version_id
+                )
+            )
+
+    async def resolve_bindings(
+        self,
+        consumer_version_id: str,
+        workspace_id: str,
+        overrides: Mapping[str, str] | None = None,
+    ) -> Mapping[str, str]:
+        """把 Agent 版本的引用解析成 `provider_asset_id → provider_version_id`。
+
+        **这是「通道 / 锁定」两种模式唯一分支的地方**：下游（Run 冻结、Span 归因）
+        看到的是同一个映射。解析不到版本的引用会被跳过——调用方据此决定是失败还是告警。
+        """
+        async with UnitOfWork(self._db) as uow:
+            version = await AssetVersionRepository(uow.session).get(consumer_version_id, workspace_id)
+        if version is None:
+            raise NotFound("版本", consumer_version_id)
+
+        bindings = await self.list_bindings_of_consumer(
+            version.asset_id, workspace_id, consumer_version_id
+        )
+        # 版本级绑定优先于 Agent 级绑定：先处理版本级，先到先得，后者不覆盖。
+        ordered = sorted(bindings, key=lambda item: item.consumer_version_id is None)
+        declared = {binding.provider_asset_id for binding in bindings}
+
+        resolved: dict[str, str] = {}
+        for binding in ordered:
+            if binding.provider_asset_id in resolved:
+                continue
+            version_id = await self._resolve_one(binding, workspace_id)
+            if version_id is not None:
+                resolved[binding.provider_asset_id] = version_id
+
+        # 覆盖只对**已声明**的引用生效：不能靠 override 引用一个 Agent 没绑定的资源。
+        for provider_asset_id, version_id in (overrides or {}).items():
+            if provider_asset_id in declared:
+                resolved[provider_asset_id] = version_id
+        return resolved
+
+    async def resolve_binding_version(
+        self, binding: AssetBinding, workspace_id: str
+    ) -> str | None:
+        """单条引用的解析结果。列表接口用它把「跟随通道」显示成具体版本。"""
+        return await self._resolve_one(binding, workspace_id)
+
+    async def _resolve_one(self, binding: AssetBinding, workspace_id: str) -> str | None:
+        if binding.resolve_mode == "pinned":
+            return binding.provider_version_id
+        channel = binding.target_channel()
+        if channel is None:
+            return None
+        version = await self.version_of_channel(binding.provider_asset_id, channel, workspace_id)
+        return version.id if version is not None else None
+
+    async def attribution_targets(
+        self, *, workspace_id: str, asset_id: str, version_id: str | None = None
+    ) -> Sequence[CapabilityAttributionRef]:
+        """实现 `contracts.asset.AttributionTargetPort`：给 ingest 提供归因候选。
+
+        `version_id` 为空 = SDK 上报的生产 Trace，回退到该资产的 LIVE 版本。
+        回退也解析不出引用时返回空列表——**归因不上就不归因**，不猜。
+        """
+        resolved_version_id = version_id
+        if resolved_version_id is None:
+            live = await self.version_of_channel(asset_id, Channel.LIVE, workspace_id)
+            if live is None:
+                return ()
+            resolved_version_id = live.id
+
+        bindings = await self.list_bindings_of_consumer(asset_id, workspace_id, resolved_version_id)
+        targets: list[CapabilityAttributionRef] = []
+        seen: set[str] = set()
+        for binding in bindings:
+            if binding.provider_asset_id in seen:
+                continue
+            seen.add(binding.provider_asset_id)
+            provider_version_id = await self._resolve_one(binding, workspace_id)
+            if provider_version_id is None:
+                continue
+            ref = await self.get_version_ref(provider_version_id, workspace_id)
+            if ref is None:
+                continue
+            names = await self._attribution_names(binding, ref.spec, workspace_id)
+            if not names:
+                continue
+            targets.append(
+                CapabilityAttributionRef(
+                    asset_id=binding.provider_asset_id,
+                    version_id=provider_version_id,
+                    kind=binding.provider_kind,
+                    names=frozenset(names),
+                )
+            )
+        return targets
+
+    async def consumers_of_resource(
+        self, *, workspace_id: str, resource_asset_id: str
+    ) -> Sequence[str]:
+        """实现 `contracts.asset.AttributionTargetPort`：谁引用了这个能力资产。"""
+        bindings = await self.list_bindings_of_provider(resource_asset_id, workspace_id)
+        return tuple(dict.fromkeys(binding.consumer_asset_id for binding in bindings))
+
+    async def _attribution_names(
+        self, binding: AssetBinding, spec: Mapping[str, Any], workspace_id: str
+    ) -> set[str]:
+        """按 kind 取「能在 Span 上认出来的标识」。取不到就说明这类资源还归不了因。"""
+        if binding.provider_kind is AssetKind.MCP:
+            tools = spec.get("tools") or []
+            return {
+                str(tool.get("name"))
+                for tool in tools
+                if isinstance(tool, Mapping) and tool.get("name")
+            }
+        if binding.provider_kind is AssetKind.KNOWLEDGE_BASE:
+            index_name = spec.get("index_name")
+            return {str(index_name)} if index_name else set()
+        if binding.provider_kind is AssetKind.SKILL:
+            provider = await self.get_asset_or_404(binding.provider_asset_id, workspace_id)
+            return {provider.name}
+        return set()
 
     async def resolve_credential(self, raw_key: str) -> CredentialContext | None:
         """上报/调用时用密钥换上下文。**asset_id / tenant_id 只认这里的结果。**"""

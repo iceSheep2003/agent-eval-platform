@@ -11,9 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
-from ..common import AssetKind, Channel, CredentialKind, Id
+from ..common import AssetKind, Channel, CredentialKind, Id, VersionLifecycle
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +56,40 @@ class CredentialResolverPort(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class CapabilityAttributionRef:
+    """归因用的能力资产投影：**已解析到具体版本**，且带用于匹配的标识。"""
+
+    asset_id: Id
+    version_id: Id
+    kind: AssetKind
+    #: 匹配标识：MCP 的工具名 / 知识库的 index_name / Skill 的名称。
+    names: frozenset[str]
+
+
+@runtime_checkable
+class AttributionTargetPort(Protocol):
+    """由 asset 实现；observability 在 ingest 时用它把 Span 归因到能力资产版本。
+
+    `version_id` 为空表示 SDK 上报的生产 Trace——此时回退到该资产的 LIVE 版本。
+    **归因不上就返回空**，不允许猜。
+    """
+
+    async def attribution_targets(
+        self, *, workspace_id: Id, asset_id: Id, version_id: Id | None
+    ) -> Sequence[CapabilityAttributionRef]: ...
+
+    async def consumers_of_resource(
+        self, *, workspace_id: Id, resource_asset_id: Id
+    ) -> Sequence[Id]:
+        """引用了该能力资产的 Agent id 列表。
+
+        用于归因覆盖率的**分母**——只算真正引用它的 Agent 产生的同类 Span，
+        否则全工作区的噪声会把覆盖率压得毫无意义。
+        """
+        ...
+
+
+@dataclass(frozen=True, slots=True)
 class AssetVersionRef:
     """版本投影。`entrypoint` 是执行面启动被测对象所需的最小信息。"""
 
@@ -91,11 +125,55 @@ class AssetQueryPort(Protocol):
         """
         ...
 
+    async def resolve_bindings(
+        self,
+        version_id: Id,
+        workspace_id: Id,
+        overrides: Mapping[Id, Id] | None = None,
+    ) -> Mapping[Id, Id]:
+        """Agent 版本引用的能力资产 → **解析后的**版本 ID。
+
+        `resolve_mode=channel` 的引用在调用时才解析成具体版本；execution 在 `CreateRun`
+        时把结果冻进 `Run.binding_snapshot`，之后不再重新解析——否则「跟随通道」会让
+        历史 Run 的结果随资源升级而漂移。
+        """
+        ...
+
+    async def channel_map(
+        self, asset_id: Id, workspace_id: Id
+    ) -> Mapping[Channel, Id | None]:
+        """三通道 → 当前绑定的版本 ID。晋级/回退据此判断「版本现在在哪」。"""
+        ...
 
 __all__ = [
     "AssetQueryPort",
+    "AttributionTargetPort",
+    "ChannelWritePort",
     "AssetRef",
     "AssetVersionRef",
+    "CapabilityAttributionRef",
     "CredentialContext",
     "CredentialResolverPort",
 ]
+
+
+@runtime_checkable
+class ChannelWritePort(Protocol):
+    """由 asset 实现；delivery 晋级/回退时改通道指针与版本生命周期。
+
+    晋级 = 改指针 + 写审计行，**不删除任何版本与证据**（需求说明 §9.12）。
+    """
+
+    async def bind_channel(
+        self,
+        *,
+        asset_id: Id,
+        channel: Channel,
+        version_id: Id | None,
+        workspace_id: Id,
+        actor_id: Id,
+    ) -> None: ...
+
+    async def set_version_lifecycle(
+        self, version_id: Id, lifecycle: VersionLifecycle, workspace_id: Id
+    ) -> None: ...

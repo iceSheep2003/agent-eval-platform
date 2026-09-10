@@ -16,70 +16,81 @@ from backend.tests.architecture._helpers import BACKEND_ROOT
 
 VERSIONS_DIR = BACKEND_ROOT / "migrations" / "versions"
 
-#: op.xxx(<table_name>, ...) —— 第一个参数是表名的操作
-TABLE_OPS = (
+#: 第一个参数是**表名**的操作
+TABLE_FIRST_OPS = (
     "create_table",
     "drop_table",
     "add_column",
     "drop_column",
     "alter_column",
-    "create_index",
-    "drop_index",
     "create_unique_constraint",
     "create_foreign_key",
     "create_check_constraint",
 )
 
-_CALL = re.compile(r"op\.(" + "|".join(TABLE_OPS) + r")\(\s*[\"']([a-z_]+)[\"']")
+#: 第一个参数是**索引名**、第二个才是表名的操作
+TABLE_SECOND_OPS = ("create_index", "drop_index")
+
+#: `batch_op.add_column('x')` 的第一个参数是**列名**，不是表名——表名在 `batch_alter_table`
+#: 上。所以用 `(?<!batch_)` 排除掉，表名改由 `_BATCH` 单独校验。
+_CALL = re.compile(
+    r"(?<!batch_)op\.(" + "|".join(TABLE_FIRST_OPS) + r")\(\s*[\"']([a-z_]+)[\"']"
+)
+
+#: create_index('ix_x', 'table_name', ...) —— 表名在第二位
+_CALL_SECOND = re.compile(
+    r"(?<!batch_)op\.(" + "|".join(TABLE_SECOND_OPS)
+    + r")\(\s*[\"'][a-z_]+[\"']\s*,\s*[\"']([a-z_]+)[\"']"
+)
+
+#: batch_alter_table('table_name', ...) —— 批处理块的目标表。
+_BATCH = re.compile(r"batch_alter_table\(\s*[\"']([a-z_]+)[\"']")
+
+
+def _table_names(source: str) -> list[str]:
+    return (
+        [table for _, table in _CALL.findall(source)]
+        + [table for _, table in _CALL_SECOND.findall(source)]
+        + _BATCH.findall(source)
+    )
 
 
 def _migrations() -> list[Path]:
     return sorted(path for path in VERSIONS_DIR.glob("*.py") if path.name != "__init__.py")
 
 
-def _assignments(path: Path) -> dict[str, object]:
+def _branch_labels(path: Path) -> tuple[str, ...]:
+    """读 `branch_labels`。后续迁移写 `branch_labels = None`（合法），返回空元组。"""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    found: dict[str, object] = {}
     for node in tree.body:
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name):
-                    try:
-                        found[target.id] = ast.literal_eval(node.value)
-                    except ValueError:
-                        found[target.id] = None
-    return found
-
-
-def _branch_labels(path: Path) -> tuple[str, ...]:
-    """分支标签。
-
-    Alembic 只允许**分支的首个** revision 声明 `branch_labels`，同一模块的后续迁移
-    必须留空（否则报 `Branch name already used`）。所以这里对后者回退到
-    `revision` 的模块前缀——`portal_0002` → `portal`，校验强度不变。
-    """
-    values = _assignments(path)
-    labels = values.get("branch_labels")
-    if labels:
-        return tuple(labels)  # type: ignore[arg-type]
-    revision = values.get("revision")
-    if isinstance(revision, str) and "_" in revision:
-        return (revision.split("_", 1)[0],)
+                if isinstance(target, ast.Name) and target.id == "branch_labels":
+                    value = ast.literal_eval(node.value)
+                    return tuple(value) if value else ()
     return ()
+
+
+def _module_of(path: Path) -> str:
+    """迁移属于哪个模块。
+
+    分支**根**迁移用 `branch_labels` 声明（Alembic 要求一个分支名只能用一次），
+    后续迁移 `branch_labels = None`，模块名从文件名前缀取——
+    `test_migration_revisions_are_module_prefixed` 保证了两者一致。
+    """
+    labels = _branch_labels(path)
+    assert len(labels) <= 1, f"{path.name} 只应属于一个模块，收到 {labels}"
+    if labels:
+        return labels[0]
+    return path.name.split("_", 1)[0]
 
 
 @pytest.mark.parametrize("path", _migrations(), ids=lambda path: path.name)
 def test_migration_touches_only_own_module_tables(path: Path) -> None:
-    labels = _branch_labels(path)
-    assert labels, f"{path.name} 必须声明 branch_labels（模块名）"
-    assert len(labels) == 1, f"{path.name} 只应属于一个模块，收到 {labels}"
-
-    module = labels[0]
+    module = _module_of(path)
     source = path.read_text(encoding="utf-8")
     offenders = [
-        f"{op}({table!r})"
-        for op, table in _CALL.findall(source)
-        if not table.startswith(f"{module}_")
+        table for table in _table_names(source) if not table.startswith(f"{module}_")
     ]
     assert not offenders, (
         f"{path.name} 属于模块 {module}，却操作了其他模块的表：{offenders}。\n"
@@ -95,8 +106,6 @@ def test_every_module_has_a_baseline() -> None:
 
 def test_migration_revisions_are_module_prefixed() -> None:
     for path in _migrations():
-        labels = _branch_labels(path)
-        if labels:
-            assert path.name.startswith(f"{labels[0]}_"), (
-                f"{path.name} 的文件名应以模块名开头，便于按模块检索"
-            )
+        assert path.name.startswith(f"{_module_of(path)}_"), (
+            f"{path.name} 的文件名应以模块名开头，便于按模块检索"
+        )

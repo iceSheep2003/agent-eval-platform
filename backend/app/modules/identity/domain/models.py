@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
-from ....contracts.common import Id, WorkspaceRole
+from ....contracts.common import Id, OrgRole, WorkspaceRole
 
 UserStatus = Literal["active", "disabled"]
 AuthMethod = Literal["password", "oidc"]
@@ -36,8 +36,57 @@ class User:
 
 
 @dataclass(frozen=True, slots=True)
-class Workspace:
+class Organization:
+    """组织：平台最上层单位（对齐 Langfuse）。
+
+    管成员、计费、建/删项目；**不直接持有评测资产**。
+    """
+
     id: Id
+    slug: str
+    name: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class OrganizationMembership:
+    """组织级角色。只管组织层的事，不参与工作区内权限判定。"""
+
+    organization_id: Id
+    user_id: Id
+    role: OrgRole
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class Invitation:
+    """按邮箱邀请加入组织。
+
+    账号已存在 → 立即成为组织成员；账号不存在 → 留 pending，等对方首次登录时自动接受。
+    （平台的账号由自建 IdP 提供，不开放自助注册，所以邀请是唯一的加人入口。）
+    """
+
+    id: Id
+    organization_id: Id
+    email: str
+    role: OrgRole
+    status: Literal["pending", "accepted", "revoked"]
+    invited_by: Id
+    created_at: datetime
+    expires_at: datetime
+    accepted_at: datetime | None = None
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == "pending"
+
+
+@dataclass(frozen=True, slots=True)
+class Workspace:
+    """项目：评测资产的隔离单位（对齐 Langfuse 的 Project）。"""
+
+    id: Id
+    organization_id: Id
     slug: str
     name: str
     created_at: datetime
