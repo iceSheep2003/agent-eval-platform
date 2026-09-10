@@ -139,14 +139,14 @@ async def _scenario(tmp_path) -> None:
         agent = await container.assets.register_agent(
             workspace_id=workspace_id, owner_id=owner, name="echo-agent",
             connect_type="package",
-            source={"artifact_id": "a1", "entrypoint": ENTRYPOINT},
+            source={"artifact_id": "a1", "entrypoint": ENTRYPOINT, "memory": {"scope": "stateless"}},
         )
 
         # 版本 A：评测全通过 → 门禁放行
         good = await container.assets.create_version(
             asset_id=agent.id, workspace_id=workspace_id, created_by=owner,
             spec={"kind": "agent", "connect_type": "package", "artifact_id": "a1",
-                  "entrypoint": ENTRYPOINT},
+                  "entrypoint": ENTRYPOINT, "memory": {"scope": "stateless"}},
         )
         run = await _run_eval(
             container, workspace_id=workspace_id, owner=owner, agent_id=agent.id,
@@ -212,7 +212,7 @@ async def _scenario(tmp_path) -> None:
         bad = await container.assets.create_version(
             asset_id=agent.id, workspace_id=workspace_id, created_by=owner,
             spec={"kind": "agent", "connect_type": "package", "artifact_id": "a1",
-                  "entrypoint": ENTRYPOINT, "variant": "b"},
+                  "entrypoint": ENTRYPOINT, "variant": "b", "memory": {"scope": "stateless"}},
         )
         bad_run = await _run_eval(
             container, workspace_id=workspace_id, owner=owner, agent_id=agent.id,
@@ -237,7 +237,7 @@ async def _scenario(tmp_path) -> None:
         bare = await container.assets.create_version(
             asset_id=agent.id, workspace_id=workspace_id, created_by=owner,
             spec={"kind": "agent", "connect_type": "package", "artifact_id": "a1",
-                  "entrypoint": ENTRYPOINT, "variant": "c"},
+                  "entrypoint": ENTRYPOINT, "variant": "c", "memory": {"scope": "stateless"}},
         )
         with pytest.raises(DomainError) as no_run:
             await container.delivery.request_promotion(

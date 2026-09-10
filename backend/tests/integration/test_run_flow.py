@@ -75,7 +75,7 @@ async def _scenario(tmp_path) -> None:
             owner_id=owner,
             name="echo-agent",
             connect_type="package",
-            source={"artifact_id": "artifact-1", "entrypoint": ENTRYPOINT},
+            source={"artifact_id": "artifact-1", "entrypoint": ENTRYPOINT, "memory": {"scope": "stateless"}},
         )
         version = await container.assets.create_version(
             asset_id=agent.id,
@@ -86,6 +86,7 @@ async def _scenario(tmp_path) -> None:
                 "connect_type": "package",
                 "artifact_id": "artifact-1",
                 "entrypoint": ENTRYPOINT,
+                "memory": {"scope": "stateless"},
             },
         )
 

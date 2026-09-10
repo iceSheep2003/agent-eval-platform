@@ -134,6 +134,34 @@ async def list_versions(
     return list_response([_version_dto(version).model_dump() for version in versions])
 
 
+@router.get("/agents/{agent_id}/versions/{version_id}/conformance")
+async def version_conformance(
+    version_id: str,
+    asset: Annotated[Asset, Depends(require_on_agent(Permission.ASSET_READ))],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+    require_streaming: bool = False,
+) -> dict:
+    """开发规范验收：这个版本能不能被平台托管。
+
+    静态检查在冻结版本时就跑过了；这里补上**需要真的 import 进来看签名**的那半
+    （入口是否接受 `input` / `messages`、是不是异步生成器）。
+
+    `require_streaming=true` 时额外要求是异步生成器——绑 LIVE 前用这个口径查。
+    """
+    result = await assets.check_conformance(
+        version_id, asset.workspace_id, require_streaming=require_streaming
+    )
+    return ok(
+        {
+            "passed": result.ok,
+            "issues": [
+                {"field": item.field, "code": item.code, "message": item.message}
+                for item in result.issues
+            ],
+        }
+    )
+
+
 @router.post("/agents/{agent_id}/versions")
 async def create_version(
     payload: CreateVersionRequest,

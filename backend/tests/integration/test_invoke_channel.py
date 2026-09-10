@@ -59,7 +59,7 @@ async def _register(container: Container, workspace_id: str, owner: str):
         owner_id=owner,
         name="echo-agent",
         connect_type="package",
-        source={"artifact_id": "artifact-1", "entrypoint": ECHO},
+        source={"artifact_id": "artifact-1", "entrypoint": ECHO, "memory": {"scope": "stateless"}},
     )
     versions = await container.assets.list_versions(agent.id, workspace_id)
     return agent, versions[0]
@@ -128,6 +128,7 @@ async def _scenario(tmp_path) -> None:
                 "connect_type": "package",
                 "artifact_id": "artifact-2",
                 "entrypoint": SHADOW,
+                "memory": {"scope": "stateless"},
             },
         )
         await container.assets.bind_channel(
@@ -156,7 +157,7 @@ async def _scenario(tmp_path) -> None:
             asset_id=agent.id,
             workspace_id=workspace_id,
             created_by=owner,
-            spec={"kind": "agent", "connect_type": "sdk"},
+            spec={"kind": "agent", "connect_type": "sdk", "memory": {"scope": "stateless"}},
         )
         await container.assets.bind_channel(
             asset_id=agent.id,

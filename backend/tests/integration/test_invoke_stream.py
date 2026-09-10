@@ -64,7 +64,7 @@ async def _bind(container: Container, workspace_id: str, owner: str, entrypoint:
         owner_id=owner,
         name=f"agent-{entrypoint.rsplit(':', 1)[-1]}",
         connect_type="package",
-        source={"artifact_id": "a-1", "entrypoint": entrypoint},
+        source={"artifact_id": "a-1", "entrypoint": entrypoint, "memory": {"scope": "stateless"}},
     )
     version = (await container.assets.list_versions(agent.id, workspace_id))[0]
     await container.assets.bind_channel(

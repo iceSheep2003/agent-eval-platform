@@ -50,6 +50,11 @@ def validate(spec: Mapping[str, Any]) -> ValidationResult:
             if port is not None and not (1 <= int(port) <= 65535):
                 issues.append(ValidationIssue("runtime.port", "range", "端口应在 1–65535"))
 
+    # 平台托管的规范检查（密钥引用、memory 作用域等）与自洽性检查一起跑。
+    from . import conformance
+
+    issues.extend(conformance.check_spec(spec).issues)
+
     return ValidationResult.success() if not issues else ValidationResult.failure(*issues)
 
 

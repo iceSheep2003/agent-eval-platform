@@ -74,7 +74,7 @@ async def _scenario(tmp_path) -> None:
             owner_id=owner,
             name="portal-agent",
             connect_type="package",
-            source={"artifact_id": "artifact-1", "entrypoint": ECHO},
+            source={"artifact_id": "artifact-1", "entrypoint": ECHO, "memory": {"scope": "stateless"}},
         )
         version = (await container.assets.list_versions(agent.id, workspace_id))[0]
         shadow = await container.assets.create_version(
@@ -86,6 +86,7 @@ async def _scenario(tmp_path) -> None:
                 "connect_type": "package",
                 "artifact_id": "artifact-2",
                 "entrypoint": SHADOW,
+                "memory": {"scope": "stateless"},
             },
         )
 

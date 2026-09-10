@@ -49,4 +49,19 @@ def is_capability(kind: AssetKind) -> bool:
     return kind in CAPABILITY_KINDS
 
 
-__all__ = ["CAPABILITY_KINDS", "SpecValidator", "is_capability", "validator_for"]
+def conformance_for(kind: AssetKind):
+    """拿某类资产的**规范校验器**。目前只有 Agent 有——能力资产的规范各自定义。"""
+    if kind is AssetKind.AGENT:
+        from . import conformance
+
+        return conformance
+    return None
+
+
+__all__ = [
+    "CAPABILITY_KINDS",
+    "SpecValidator",
+    "conformance_for",
+    "is_capability",
+    "validator_for",
+]

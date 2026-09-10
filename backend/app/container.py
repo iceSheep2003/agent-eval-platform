@@ -66,10 +66,12 @@ class Container:
             session_idle_hours=resolved.session_idle_hours,
             session_absolute_hours=resolved.session_absolute_hours,
         )
-        assets = AssetService(database, resolved_clock, identity, identity)
+        # 沙箱同时是执行面与**探针**：它能在进程内 import entrypoint 看签名。
+        # 必须先于 AssetService 建——校验器要用它做开发规范验收。
+        sandbox = LocalSandboxRuntime()
+        assets = AssetService(database, resolved_clock, identity, identity, sandbox)
         datasets = DatasetService(database, resolved_clock)
         evaluations = EvaluationService(database, resolved_clock, datasets, assets)
-        sandbox = LocalSandboxRuntime()
         runs = RunService(
             database, resolved_clock, assets, datasets, evaluations, evaluations, sandbox
         )

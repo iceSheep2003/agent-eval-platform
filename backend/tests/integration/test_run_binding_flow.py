@@ -79,7 +79,7 @@ async def _scenario(tmp_path) -> None:
             owner_id=owner,
             name="skill-agent",
             connect_type="package",
-            source={"artifact_id": "artifact-1", "entrypoint": ENTRYPOINT},
+            source={"artifact_id": "artifact-1", "entrypoint": ENTRYPOINT, "memory": {"scope": "stateless"}},
         )
         agent_version = (await assets.list_versions(agent.id, workspace_id))[0]
 

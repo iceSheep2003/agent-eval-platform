@@ -14,6 +14,7 @@ import logging
 import time
 from typing import Any, AsyncIterator, Callable, Mapping
 
+from ..contracts.execution import EntrypointReport
 from ..modules.execution.application.ports import (
     InvocationContext,
     InvokeResult,
@@ -219,6 +220,39 @@ class LocalSandboxRuntime:
         if result.error is not None:
             raise EntrypointError(result.error)
         yield _as_text(result.output)
+
+    def probe(self, entrypoint: str) -> EntrypointReport:
+        """import 进来 inspect 签名——**验收 Agent 是否符合开发规范**要用真实能力，
+        不能靠 spec 里的声明。任何异常都收进 `error`，不抛。
+        """
+        try:
+            target = _resolve(entrypoint)
+        except Exception as exc:  # noqa: BLE001 - 探测失败要如实报告，不抛
+            return EntrypointReport(
+                entrypoint=entrypoint,
+                importable=False,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+        try:
+            parameters = inspect.signature(target).parameters
+        except (TypeError, ValueError):
+            return EntrypointReport(entrypoint=entrypoint, importable=True)
+
+        return EntrypointReport(
+            entrypoint=entrypoint,
+            importable=True,
+            accepts_input="input" in parameters,
+            accepts_messages="messages" in parameters,
+            accepts_secrets="secrets" in parameters,
+            accepts_memory="memory" in parameters,
+            accepts_kwargs=any(
+                item.kind is inspect.Parameter.VAR_KEYWORD
+                for item in parameters.values()
+            ),
+            is_async_generator=inspect.isasyncgenfunction(target),
+            is_async=inspect.iscoroutinefunction(target),
+        )
 
     async def teardown(self, handle: RuntimeHandle) -> None:
         return None

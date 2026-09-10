@@ -16,8 +16,15 @@ from ....contracts.asset import (
     CapabilityAttributionRef,
     CredentialContext,
 )
-from ....contracts.common import AssetKind, Channel, CredentialKind, VersionLifecycle
+from ....contracts.common import (
+    AssetKind,
+    Channel,
+    CredentialKind,
+    ValidationResult,
+    VersionLifecycle,
+)
 from ....contracts.errors import DomainError, Errors, NotFound
+from ....contracts.execution import EntrypointProbePort
 from ....contracts.identity import MembershipQueryPort, TenantProvisioningPort
 from ....persistence import UnitOfWork
 from ....persistence.database import Database
@@ -69,11 +76,40 @@ class AssetService:
         clock: Clock,
         tenants: TenantProvisioningPort,
         members: MembershipQueryPort,
+        prober: EntrypointProbePort | None = None,
     ) -> None:
         self._db = database
         self._clock = clock
         self._tenants = tenants
         self._members = members
+        #: 执行面的探针。**可选**——纯离线场景（只建资产不跑）可以不接。
+        self._prober = prober
+
+    # -- 开发规范验收 --------------------------------------------------------
+
+    async def check_conformance(
+        self, version_id: str, workspace_id: str, *, require_streaming: bool = False
+    ) -> ValidationResult:
+        """对一个已冻结的版本跑**完整的**开发规范验收。
+
+        静态部分在冻结时就查过了；这里补上需要真的把 Agent import 进来看签名的那半。
+        返回不合规清单，调用方据此决定是否放行到 LIVE。
+        """
+        version = await self.get_version(version_id, workspace_id)
+        if version is None:
+            raise NotFound("版本", version_id)
+        conformance = spec_registry.conformance_for(AssetKind.AGENT)
+        connect_type = str(version.spec.get("connect_type") or "")
+        entrypoint = str(version.spec.get("entrypoint") or "")
+
+        if connect_type == "sdk" or not entrypoint or self._prober is None:
+            # 不适用（sdk 接入 / 无 entrypoint / 没接探针）：静态结果为准。
+            return conformance.check_spec(version.spec)
+
+        report = self._prober.probe(entrypoint)
+        return conformance.check_entrypoint(
+            report, connect_type=connect_type, require_streaming=require_streaming
+        )
 
     # -- 查询 ----------------------------------------------------------------
 

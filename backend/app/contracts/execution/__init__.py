@@ -114,8 +114,43 @@ class InvokePort(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class EntrypointReport:
+    """一个 entrypoint 的**实际能力**（import 之后 inspect 出来的，不是猜的）。
+
+    开发规范要求 Agent 接受 `input` 与 `messages`、可选 `secrets` / `memory`。
+    光看 spec 验不出来，必须真的把它 import 进来看签名。
+    """
+
+    entrypoint: str
+    importable: bool
+    #: 能接受平台协议里的哪些形参。
+    accepts_input: bool = False
+    accepts_messages: bool = False
+    accepts_secrets: bool = False
+    accepts_memory: bool = False
+    accepts_kwargs: bool = False
+    #: 异步生成器 → 支持真流式；协程/普通函数 → 一次性。
+    is_async_generator: bool = False
+    is_async: bool = False
+    error: str | None = None
+
+    @property
+    def supports_streaming(self) -> bool:
+        return self.is_async_generator
+
+
+@runtime_checkable
+class EntrypointProbePort(Protocol):
+    """由执行面实现；asset 在校验 Agent 版本时用来做「能不能跑」的验收。"""
+
+    def probe(self, entrypoint: str) -> EntrypointReport: ...
+
+
 __all__ = [
     "ChannelInvocation",
+    "EntrypointProbePort",
+    "EntrypointReport",
     "RunQueryPort",
     "RunRef",
     "InvokeEvent",
