@@ -44,7 +44,6 @@ async def _authorize_on_agent(
             kind="asset",
             id=asset.id,
             workspace_id=asset.workspace_id,
-            tenant_id=asset.tenant_id,
             owner_id=asset.owner_id,
         ),
     )

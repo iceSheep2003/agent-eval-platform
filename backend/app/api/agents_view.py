@@ -61,6 +61,13 @@ async def _agent_row(
         if result is not None:
             quality = round(result.avg_score * 100, 1)
 
+    # 运行实例：与发布通道是两条独立生命周期，列表里带上 LIVE 的实例状态，
+    # 前端就不必逐行再查一次（N+1）。
+    instances = await container.deployments.list_instances(agent.id, workspace_id)
+    live_instance = next(
+        (item for item in instances if item.channel is Channel.LIVE), None
+    )
+
     by_version = {version.id: version.version_label for version in versions}
     latest = versions[0] if versions else None
     return {
@@ -90,7 +97,10 @@ async def _agent_row(
         if metrics.trace_count
         else None,
         "quality_score": quality,
-        "instance_count": 0,
+        "instance_count": len(instances),
+        "instance_status": live_instance.state.value if live_instance else None,
+        "instance_id": live_instance.id if live_instance else None,
+        "instance_error": live_instance.error if live_instance else None,
         "binding_count": 0,
         "created_at": agent.created_at.isoformat(),
         "updated_at": agent.created_at.isoformat(),

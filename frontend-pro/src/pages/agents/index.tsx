@@ -38,6 +38,12 @@ import {
 } from '@/services/eval/agents';
 import type { AgentCredential } from '@/services/eval/credentials';
 import { getAgentCredentials } from '@/services/eval/credentials';
+import type { InstanceStatus } from '@/services/eval/instances';
+import {
+  instanceMeta,
+  startInstance,
+  stopInstance,
+} from '@/services/eval/instances';
 import type { LifecyclePolicy } from '@/services/eval/lifecycle';
 import {
   describeCheck,
@@ -63,6 +69,11 @@ type AgentRow = EvalAgent & {
   source_ref: string;
   credential_state: 'ready' | 'missing' | 'expiring';
   updated_at: string;
+  // 运行实例：与发布通道是两条独立生命周期。列表里带的是 LIVE 实例状态。
+  instance_status?: InstanceStatus | null;
+  instance_id?: string | null;
+  instance_error?: string | null;
+  instance_count?: number;
   // 后端可能返回 null（该通道没有绑定版本）
   test_version?: string | null;
   livesh_version?: string | null;
@@ -301,6 +312,23 @@ export default function AgentsPage() {
       });
     } catch {
       // 拿不到比对结果不影响主流程
+    }
+  };
+
+  /** 启停 LIVE 实例。启动的前提是该通道已绑定版本——没绑后端会说明原因。 */
+  const toggleInstance = async (agent: AgentRow, action: 'start' | 'stop') => {
+    if (!workspace) return;
+    try {
+      if (action === 'start') {
+        await startInstance(workspace.id, agent.id, 'live');
+        message.success(`${agent.name} 的 LIVE 实例已启动`);
+      } else if (agent.instance_id) {
+        await stopInstance(workspace.id, agent.id, agent.instance_id);
+        message.success(`${agent.name} 的 LIVE 实例已停止`);
+      }
+      await refresh();
+    } catch {
+      // 失败原因（通道没绑版本 / 重复启动 / 启动失败）由 requestErrorConfig 弹出
     }
   };
 
@@ -573,6 +601,37 @@ export default function AgentsPage() {
             ),
           },
           { title: '负责人', dataIndex: 'owner', width: 130, ellipsis: true },
+          {
+            title: 'LIVE 实例',
+            dataIndex: 'instance_status',
+            width: 170,
+            render: (_, item) => {
+              const meta = instanceMeta(item.instance_status);
+              const running = item.instance_status === 'running';
+              return (
+                <Space size={4}>
+                  <Tag color={meta.color}>{meta.label}</Tag>
+                  {running ? (
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={() => void toggleInstance(item, 'stop')}
+                    >
+                      停止
+                    </Button>
+                  ) : (
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={() => void toggleInstance(item, 'start')}
+                    >
+                      启动
+                    </Button>
+                  )}
+                </Space>
+              );
+            },
+          },
           {
             title: '凭证',
             dataIndex: 'credential_state',
