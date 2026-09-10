@@ -43,6 +43,8 @@ import {
 } from '@/services/eval/secrets';
 import type { AgentCredential } from '@/services/eval/credentials';
 import { getAgentCredentials } from '@/services/eval/credentials';
+import type { LifecyclePolicy } from '@/services/eval/lifecycle';
+import { describeCheck, getLifecyclePolicy, transitionTo } from '@/services/eval/lifecycle';
 import type { Member } from '@/services/eval/members';
 import { getWorkspaceMembers } from '@/services/eval/members';
 import styles from './style.module.css';
@@ -340,6 +342,8 @@ export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [credentials, setCredentials] = useState<AgentCredential[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  // 治理策略：晋级要做哪些检查由后端声明，前端不写死
+  const [policy, setPolicy] = useState<LifecyclePolicy>();
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [lifecycle, setLifecycle] = useState<'all' | Lifecycle>('all');
@@ -361,6 +365,7 @@ export default function AgentsPage() {
       setCredentials(keys.items);
       const roster = await getWorkspaceMembers(workspace.id);
       setMembers(roster.items);
+      setPolicy(await getLifecyclePolicy());
     } catch {
       setAgents([]);
     } finally {
@@ -1202,8 +1207,53 @@ export default function AgentsPage() {
                 onChange={setTargetLifecycle}
                 options={lifecycleOptions}
               />
-              <span>变更必须引用最近一次通过的评测证据，接口已预留。</span>
+              <span>变更必须引用最近一次通过的评测证据。</span>
             </div>
+
+            {(() => {
+              const transition = transitionTo(policy, targetLifecycle);
+              if (targetLifecycle === 'test') {
+                return (
+                  <div className={styles.releaseGate}>
+                    <strong>TEST 是候选通道</strong>
+                    <span>冻结新版本即自动进入 TEST，无需晋级操作。</span>
+                  </div>
+                );
+              }
+              if (!transition) {
+                return (
+                  <div className={styles.releaseGate}>
+                    <strong>没有声明这条迁移</strong>
+                    <span>
+                      当前治理策略里没有 {targetLifecycle.toUpperCase()} 方向的规则，
+                      无法晋级。可在「组织与成员」的治理策略里配置。
+                    </span>
+                  </div>
+                );
+              }
+              const enabled = transition.checks.filter((item) => item.enabled);
+              return (
+                <div className={styles.releaseGate}>
+                  <div className={styles.releaseGateHeader}>
+                    <strong>
+                      {transition.from_channel.toUpperCase()} →{' '}
+                      {transition.to_channel.toUpperCase()} 需要
+                    </strong>
+                    <code>{transition.permission}</code>
+                  </div>
+                  <ol>
+                    {enabled.map((check) => (
+                      <li key={check.name}>{describeCheck(check)}</li>
+                    ))}
+                  </ol>
+                  {transition.requires_reauth && (
+                    <span className={styles.releaseGateWarn}>
+                      发布到生产需要二次确认，提交时会再校验一次。
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
             <div className={styles.lifecycleMatrix}>
               {[
                 {

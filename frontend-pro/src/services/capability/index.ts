@@ -219,6 +219,17 @@ export const createCapabilityVersion = (
     ...withWorkspace(workspaceId),
   });
 
+export const updateCapabilityConfig = (
+  workspaceId: string,
+  assetId: string,
+  spec: Record<string, unknown>,
+) =>
+  call<CapabilityAsset>(`/api/v1/assets/${assetId}/config`, {
+    method: 'PUT',
+    data: { spec },
+    ...withWorkspace(workspaceId),
+  });
+
 export const listProviderBindings = (workspaceId: string, assetId: string) =>
   call<{ items: CapabilityBinding[] }>(
     `/api/v1/assets/${assetId}/bindings`,

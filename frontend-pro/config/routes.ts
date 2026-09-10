@@ -21,6 +21,13 @@ export default [
     component: './secrets',
   },
   {
+    path: '/docs',
+    name: '开发文档',
+    icon: 'ReadOutlined',
+    component: './docs',
+  },
+  { path: '/docs/:slug', component: './docs', hideInMenu: true },
+  {
     path: '/skills',
     name: 'Skill 管理',
     icon: 'BranchesOutlined',
