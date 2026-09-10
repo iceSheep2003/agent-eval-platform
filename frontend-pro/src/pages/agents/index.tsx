@@ -36,15 +36,21 @@ import {
   promoteAgentVersion,
   registerAgent,
 } from '@/services/eval/agents';
+import type { AgentCredential } from '@/services/eval/credentials';
+import { getAgentCredentials } from '@/services/eval/credentials';
+import type { LifecyclePolicy } from '@/services/eval/lifecycle';
+import {
+  describeCheck,
+  getLifecyclePolicy,
+  transitionTo,
+} from '@/services/eval/lifecycle';
+import type { Member } from '@/services/eval/members';
+import { getWorkspaceMembers } from '@/services/eval/members';
 import {
   bindSecret,
   listAgentVersions,
   putSecret,
 } from '@/services/eval/secrets';
-import type { AgentCredential } from '@/services/eval/credentials';
-import { getAgentCredentials } from '@/services/eval/credentials';
-import type { Member } from '@/services/eval/members';
-import { getWorkspaceMembers } from '@/services/eval/members';
 import styles from './style.module.css';
 
 type Lifecycle = 'test' | 'livesh' | 'live';
@@ -79,234 +85,6 @@ const sourceMeta: Record<SourceKind, { label: string; icon: React.ReactNode }> =
     sdk: { label: 'SDK', icon: <CodeOutlined /> },
   };
 
-const demoAgents: AgentRow[] = [
-  [
-    'support-copilot',
-    'Customer Support',
-    'Customer Ops',
-    'github',
-    'acme/support-agent · main',
-    'live',
-    'v2.8.1',
-    99.3,
-    842,
-    18429,
-  ],
-  [
-    'policy-curator',
-    'Policy Curator',
-    'Knowledge Ops',
-    'sdk',
-    'pk_live_••••A72F',
-    'livesh',
-    'v1.9.0-rc.2',
-    98.1,
-    1120,
-    8742,
-  ],
-  [
-    'invoice-auditor',
-    'Invoice Auditor',
-    'Finance AI',
-    'package',
-    'invoice-agent-4.6.2.tar.gz',
-    'live',
-    'v4.6.2',
-    99.7,
-    690,
-    22318,
-  ],
-  [
-    'sales-research',
-    'Sales Research',
-    'Growth Systems',
-    'github',
-    'acme/research-graph · 9f32c7a',
-    'test',
-    'v0.14.0',
-    94.2,
-    2380,
-    486,
-  ],
-  [
-    'oncall-triage',
-    'On-call Triage',
-    'SRE',
-    'sdk',
-    'pk_live_••••C19D',
-    'live',
-    'v3.2.5',
-    99.8,
-    510,
-    52110,
-  ],
-  [
-    'contract-review',
-    'Contract Review',
-    'Legal Platform',
-    'package',
-    'legal-review-2.1.0.zip',
-    'livesh',
-    'v2.1.0-rc.1',
-    97.6,
-    3210,
-    3024,
-  ],
-  [
-    'catalog-enricher',
-    'Catalog Enricher',
-    'Commerce AI',
-    'github',
-    'acme/catalog-agent · release/6',
-    'live',
-    'v6.3.0',
-    98.9,
-    1460,
-    15822,
-  ],
-  [
-    'risk-monitor',
-    'Risk Monitor',
-    'Trust & Safety',
-    'sdk',
-    'pk_live_••••8B0E',
-    'live',
-    'v5.0.4',
-    99.5,
-    780,
-    46108,
-  ],
-  [
-    'meeting-summary',
-    'Meeting Summary',
-    'Productivity',
-    'package',
-    'meeting-agent-1.3.8.zip',
-    'test',
-    'v1.4.0-beta.3',
-    92.4,
-    1920,
-    1278,
-  ],
-  [
-    'renewal-assistant',
-    'Renewal Assistant',
-    'Revenue Ops',
-    'github',
-    'acme/renewal-agent · main',
-    'livesh',
-    'v2.0.0-rc.4',
-    96.8,
-    1740,
-    6922,
-  ],
-  [
-    'quality-reviewer',
-    'Quality Reviewer',
-    'AI Quality',
-    'sdk',
-    'pk_live_••••D441',
-    'live',
-    'v3.8.7',
-    99.1,
-    960,
-    31084,
-  ],
-  [
-    'shipment-resolver',
-    'Shipment Resolver',
-    'Logistics AI',
-    'github',
-    'acme/shipment-agent · stable',
-    'live',
-    'v4.2.1',
-    98.7,
-    1280,
-    19763,
-  ],
-].map(
-  (
-    [
-      id,
-      name,
-      owner,
-      source,
-      sourceRef,
-      lifecycle,
-      version,
-      success,
-      latency,
-      runs,
-    ],
-    index,
-  ) => ({
-    id: String(id),
-    name: String(name),
-    description: `${name} 的生产运行与评测资产`,
-    owner: String(owner),
-    connect_type: String(source),
-    source_kind: source as SourceKind,
-    source_ref: String(sourceRef),
-    status: index === 8 ? 'draft' : index === 5 ? 'failed' : 'active',
-    environment:
-      lifecycle === 'live'
-        ? 'production'
-        : lifecycle === 'livesh'
-          ? 'shadow'
-          : 'sandbox',
-    lifecycle: lifecycle as Lifecycle,
-    version: String(version),
-    instance_count: lifecycle === 'test' ? 0 : 2 + (index % 4),
-    binding_count: 2 + (index % 5),
-    success_rate: Number(success) / 100,
-    latency_ms: Number(latency),
-    run_count: Number(runs),
-    credential_state:
-      index === 3 ? 'missing' : index === 7 ? 'expiring' : 'ready',
-    updated_at: new Date(Date.now() - index * 47 * 60 * 1000).toISOString(),
-    test_version: String(version),
-    livesh_version: lifecycle === 'test' ? undefined : String(version),
-    live_version: lifecycle === 'live' ? String(version) : undefined,
-    quality_score: 86.8 + ((index * 17) % 114) / 10,
-    average_cost: 0.0068 + (index % 6) * 0.0017,
-    average_llm_calls: 1.8 + (index % 5) * 0.4,
-    average_tool_calls: 0.9 + (index % 4) * 0.5,
-  }),
-);
-
-const demoKeys = [
-  {
-    id: 'key-01',
-    name: 'Production ingestion',
-    prefix: 'pk_live_A72F',
-    scope: 'traces:write',
-    agents: 6,
-    state: 'active',
-    lastUsed: '2 分钟前',
-    created: '2026-08-12',
-  },
-  {
-    id: 'key-02',
-    name: 'Staging validation',
-    prefix: 'pk_test_C19D',
-    scope: 'traces:write, evals:run',
-    agents: 3,
-    state: 'active',
-    lastUsed: '18 分钟前',
-    created: '2026-08-28',
-  },
-  {
-    id: 'key-03',
-    name: 'Legacy SDK migration',
-    prefix: 'pk_live_8B0E',
-    scope: 'traces:write',
-    agents: 2,
-    state: 'expiring',
-    lastUsed: '3 小时前',
-    created: '2026-04-09',
-  },
-];
-
 const resolveLifecycle = (agent: EvalAgent): Lifecycle => {
   if (agent.lifecycle) return agent.lifecycle;
   if (agent.status === 'draft' || /sandbox|test|dev/i.test(agent.environment))
@@ -340,6 +118,8 @@ export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [credentials, setCredentials] = useState<AgentCredential[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  // 治理策略：晋级要做哪些检查由后端声明，前端不写死
+  const [policy, setPolicy] = useState<LifecyclePolicy>();
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [lifecycle, setLifecycle] = useState<'all' | Lifecycle>('all');
@@ -361,6 +141,7 @@ export default function AgentsPage() {
       setCredentials(keys.items);
       const roster = await getWorkspaceMembers(workspace.id);
       setMembers(roster.items);
+      setPolicy(await getLifecyclePolicy());
     } catch {
       setAgents([]);
     } finally {
@@ -406,7 +187,10 @@ export default function AgentsPage() {
         entrypoint: values.entrypoint,
       });
     } else {
-      Object.assign(source, { sdk: values.sdk, credential_id: values.credential });
+      Object.assign(source, {
+        sdk: values.sdk,
+        credential_id: values.credential,
+      });
     }
     // 平台托管的 Agent 必须声明记忆作用域——`sdk` 接入自己管，不用声明。
     if (connectKind !== 'sdk') {
@@ -452,15 +236,23 @@ export default function AgentsPage() {
                 description: `Agent「${values.name}」的模型配置`,
               });
               for (const channel of ['test', 'live']) {
-                await bindSecret(workspace.id, created.id, firstVersion.id, channel, {
-                  resource_secret_id: secret.id,
-                  secret_name: name,
-                });
+                await bindSecret(
+                  workspace.id,
+                  created.id,
+                  firstVersion.id,
+                  channel,
+                  {
+                    resource_secret_id: secret.id,
+                    secret_name: name,
+                  },
+                );
               }
             }
           }
         } catch {
-          message.warning('Agent 已接入，但模型配置没绑上，请到「密钥管理」里补');
+          message.warning(
+            'Agent 已接入，但模型配置没绑上，请到「密钥管理」里补',
+          );
         }
       }
 
@@ -481,7 +273,11 @@ export default function AgentsPage() {
   const showShadowComparison = async (agentId: string, versionId: string) => {
     if (!workspace) return;
     try {
-      const comparison = await getShadowComparison(workspace.id, agentId, versionId);
+      const comparison = await getShadowComparison(
+        workspace.id,
+        agentId,
+        versionId,
+      );
       const candidate = comparison.candidate;
       const baseline = comparison.baseline;
       if (!candidate) return;
@@ -492,7 +288,17 @@ export default function AgentsPage() {
           : '基线：LIVE 尚无版本，不做比对',
         `门槛：影子样本至少 ${comparison.min_samples} 条（近 ${comparison.window_days} 天）`,
       ];
-      Modal.info({ title: '影子验证详情', width: 560, content: <div style={{ lineHeight: 2 }}>{lines.map((line) => <div key={line}>{line}</div>)}</div> });
+      Modal.info({
+        title: '影子验证详情',
+        width: 560,
+        content: (
+          <div style={{ lineHeight: 2 }}>
+            {lines.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
+          </div>
+        ),
+      });
     } catch {
       // 拿不到比对结果不影响主流程
     }
@@ -503,7 +309,9 @@ export default function AgentsPage() {
     const target = releaseAgent;
     // 晋级只能逐级走：TEST → LIVESH → LIVE。目标通道决定从哪个通道取版本。
     const versionId =
-      targetLifecycle === 'livesh' ? target.test_version_id : target.livesh_version_id;
+      targetLifecycle === 'livesh'
+        ? target.test_version_id
+        : target.livesh_version_id;
     if (targetLifecycle === 'test' || !versionId) {
       setReleaseAgent(undefined);
       message.info(
@@ -521,10 +329,14 @@ export default function AgentsPage() {
         confirm: true,
       });
       setReleaseAgent(undefined);
-      message.success(`${target.name} → ${targetLifecycle.toUpperCase()} 晋级成功`);
+      message.success(
+        `${target.name} → ${targetLifecycle.toUpperCase()} 晋级成功`,
+      );
       await refresh();
     } catch (error) {
-      const info = (error as { info?: { errorCode?: string; errorMessage?: string } }).info;
+      const info = (
+        error as { info?: { errorCode?: string; errorMessage?: string } }
+      ).info;
       if (info?.errorCode === 'gate_blocked') {
         message.error(`门禁未通过，晋级被阻断：${info.errorMessage ?? ''}`);
         // LIVESH → LIVE 的阻断多半是影子样本不足或劣于基线，把原始指标摊出来才好排查
@@ -880,7 +692,8 @@ export default function AgentsPage() {
           },
           {
             title: '最后使用',
-            render: (_, item) => item.last_used_at?.slice(0, 16).replace('T', ' ') ?? '—',
+            render: (_, item) =>
+              item.last_used_at?.slice(0, 16).replace('T', ' ') ?? '—',
           },
           {
             title: '创建时间',
@@ -1107,7 +920,8 @@ export default function AgentsPage() {
                 <div>
                   <strong>模型配置（可选覆盖）</strong>
                   <span>
-                    留空则使用「密钥管理」里的工作区默认模型。填了就在本 Agent 上覆盖该项。
+                    留空则使用「密钥管理」里的工作区默认模型。填了就在本 Agent
+                    上覆盖该项。
                   </span>
                 </div>
               </div>
@@ -1202,8 +1016,54 @@ export default function AgentsPage() {
                 onChange={setTargetLifecycle}
                 options={lifecycleOptions}
               />
-              <span>变更必须引用最近一次通过的评测证据，接口已预留。</span>
+              <span>变更必须引用最近一次通过的评测证据。</span>
             </div>
+
+            {(() => {
+              const transition = transitionTo(policy, targetLifecycle);
+              if (targetLifecycle === 'test') {
+                return (
+                  <div className={styles.releaseGate}>
+                    <strong>TEST 是候选通道</strong>
+                    <span>冻结新版本即自动进入 TEST，无需晋级操作。</span>
+                  </div>
+                );
+              }
+              if (!transition) {
+                return (
+                  <div className={styles.releaseGate}>
+                    <strong>没有声明这条迁移</strong>
+                    <span>
+                      当前治理策略里没有 {targetLifecycle.toUpperCase()}{' '}
+                      方向的规则，
+                      无法晋级。可在「组织与成员」的治理策略里配置。
+                    </span>
+                  </div>
+                );
+              }
+              const enabled = transition.checks.filter((item) => item.enabled);
+              return (
+                <div className={styles.releaseGate}>
+                  <div className={styles.releaseGateHeader}>
+                    <strong>
+                      {transition.from_channel.toUpperCase()} →{' '}
+                      {transition.to_channel.toUpperCase()} 需要
+                    </strong>
+                    <code>{transition.permission}</code>
+                  </div>
+                  <ol>
+                    {enabled.map((check) => (
+                      <li key={check.name}>{describeCheck(check)}</li>
+                    ))}
+                  </ol>
+                  {transition.requires_reauth && (
+                    <span className={styles.releaseGateWarn}>
+                      发布到生产需要二次确认，提交时会再校验一次。
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
             <div className={styles.lifecycleMatrix}>
               {[
                 {
