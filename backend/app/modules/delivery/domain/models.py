@@ -23,6 +23,10 @@ PROMOTION_PATH: Mapping[Channel, Channel] = {
     Channel.LIVESH: Channel.LIVE,
 }
 
+#: 通道由低到高。**一个版本可以同时占据多个通道**——晋级到 LIVESH 后它仍然绑在 TEST 上
+#: （TEST 始终指向最新候选），所以判断「当前在哪个通道」必须取最高的那个。
+CHANNELS_ASCENDING: tuple[Channel, ...] = (Channel.TEST, Channel.LIVESH, Channel.LIVE)
+
 #: 目标通道 → 该通道晋级时必须持有的评测阶段。
 #: 发布门禁只看 `release` 阶段的结果，开发验证的宽松样本不能拿来放行。
 REQUIRED_STAGE: Mapping[Channel, str] = {
@@ -98,8 +102,15 @@ def resolve_promotion(
     if target not in PROMOTION_PATH.values():
         raise ValueError(f"{target.value} 不是可晋级的通道")
 
+    # 取该版本占据的**最高**通道。用 `bindings.items()` 的顺序会先撞上 TEST，
+    # 导致已经到 LIVESH 的版本被判成「从 TEST 跳到 LIVE」而拒绝。
     current = next(
-        (channel for channel, bound in bindings.items() if bound == version_id), None
+        (
+            channel
+            for channel in reversed(CHANNELS_ASCENDING)
+            if bindings.get(channel) == version_id
+        ),
+        None,
     )
     if current is None:
         raise ValueError(f"版本 {version_id} 当前没有绑定任何通道，不能晋级")

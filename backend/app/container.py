@@ -83,7 +83,8 @@ class Container:
         )
         # 主仓库给 TraceService 加了给能力资产归因的 attributions 端口
         traces = TraceService(database, resolved_clock, assets, attributions=assets)
-        delivery = DeliveryService(database, resolved_clock, assets, assets, runs)
+        # delivery 多了 traces——LIVESH→LIVE 晋级要比对影子与基线的真实指标
+        delivery = DeliveryService(database, resolved_clock, assets, assets, runs, traces)
         invoke = InvokeService(assets, sandbox, traces=traces, clock=resolved_clock)
         portal_auth = PortalAuthService(
             database, resolved_clock, session_hours=resolved.portal_session_hours

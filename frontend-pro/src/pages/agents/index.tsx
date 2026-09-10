@@ -30,7 +30,12 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useWorkspace } from '@/hooks/useWorkspace';
 import type { EvalAgent } from '@/services/eval/agents';
-import { getAgents, promoteAgentVersion, registerAgent } from '@/services/eval/agents';
+import {
+  getAgents,
+  getShadowComparison,
+  promoteAgentVersion,
+  registerAgent,
+} from '@/services/eval/agents';
 import type { AgentCredential } from '@/services/eval/credentials';
 import { getAgentCredentials } from '@/services/eval/credentials';
 import type { Member } from '@/services/eval/members';
@@ -38,6 +43,9 @@ import { getWorkspaceMembers } from '@/services/eval/members';
 import styles from './style.module.css';
 
 type Lifecycle = 'test' | 'livesh' | 'live';
+
+const fmtRate = (value: number | null | undefined) =>
+  value === null || value === undefined ? '—' : `${Math.round(value * 100)}%`;
 type SourceKind = 'package' | 'github' | 'sdk';
 type AgentRow = EvalAgent & {
   source_kind: SourceKind;
@@ -417,6 +425,26 @@ export default function AgentsPage() {
     setTargetLifecycle(item.lifecycle ?? 'test');
   };
 
+  const showShadowComparison = async (agentId: string, versionId: string) => {
+    if (!workspace) return;
+    try {
+      const comparison = await getShadowComparison(workspace.id, agentId, versionId);
+      const candidate = comparison.candidate;
+      const baseline = comparison.baseline;
+      if (!candidate) return;
+      const lines = [
+        `候选（影子）：样本 ${candidate.trace_count}，成功率 ${fmtRate(candidate.success_rate)}，P95 ${candidate.p95_latency_ms ?? '—'}ms`,
+        baseline
+          ? `基线（生产）：样本 ${baseline.trace_count}，成功率 ${fmtRate(baseline.success_rate)}，P95 ${baseline.p95_latency_ms ?? '—'}ms`
+          : '基线：LIVE 尚无版本，不做比对',
+        `门槛：影子样本至少 ${comparison.min_samples} 条（近 ${comparison.window_days} 天）`,
+      ];
+      Modal.info({ title: '影子验证详情', width: 560, content: <div style={{ lineHeight: 2 }}>{lines.map((line) => <div key={line}>{line}</div>)}</div> });
+    } catch {
+      // 拿不到比对结果不影响主流程
+    }
+  };
+
   const confirmLifecycle = async () => {
     if (!releaseAgent || !workspace) return;
     const target = releaseAgent;
@@ -446,6 +474,10 @@ export default function AgentsPage() {
       const info = (error as { info?: { errorCode?: string; errorMessage?: string } }).info;
       if (info?.errorCode === 'gate_blocked') {
         message.error(`门禁未通过，晋级被阻断：${info.errorMessage ?? ''}`);
+        // LIVESH → LIVE 的阻断多半是影子样本不足或劣于基线，把原始指标摊出来才好排查
+        if (targetLifecycle === 'live') {
+          void showShadowComparison(target.id, versionId);
+        }
       }
       // 其余错误由 requestErrorConfig 统一提示
     }

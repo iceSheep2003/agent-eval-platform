@@ -1,21 +1,22 @@
 """可观测性契约。
 
-定义方：消费方（execution 的 InvokeService 要记录一次按通道调用产生的 Trace）。
-实现方：observability（`TraceService.record_invocation`）。
+两条跨模块消费线：
+- execution 的 InvokeService 记录一次按通道调用产生的 Trace（`ingested_via="gateway"`）；
+- delivery 在 LIVESH→LIVE 晋级时比对影子与基线的真实指标。
 
-**只发布被跨模块消费的项**（G2/G3）。Score 是 Trial 的产物，归 execution，不在这里。
-
-关于 Trace 与 Run 的关系：本端口只写**平台自己发起的一次调用**（`ingested_via="gateway"`），
-SDK 上报仍走 `/v1/traces` 的 NDJSON 入口，两者在 `obs_trace` 里靠 `external_trace_id` 区分。
+**Score 不在这里**：它是 Trial 的产物，与 Run/Trial 同生命周期，归 execution。
+SDK 上报仍走 `/v1/traces` 的 NDJSON 入口，与本端口写的调用 Trace 靠
+`(asset_id, external_trace_id)` 各占一行。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal, Protocol, runtime_checkable
 
-from ..common import Channel, Id, TraceOrigin, Usage
+from ..common import Channel, Id, TraceOrigin, Usage, Window
 
 TraceStatus = Literal["success", "error", "timeout", "cancelled"]
 
@@ -48,4 +49,41 @@ class TraceWriterPort(Protocol):
     async def record_invocation(self, trace: InvocationTrace) -> Id: ...
 
 
-__all__ = ["InvocationTrace", "TraceWriterPort"]
+@dataclass(frozen=True, slots=True)
+class VersionMetrics:
+    """某个**具体版本**在某个来源下的运行质量。
+
+    口径显式命名——`success_rate` 是调用成功率，不是任务完成率。
+    """
+
+    asset_version_id: Id
+    origin: TraceOrigin
+    trace_count: int
+    success_rate: float | None
+    p95_latency_ms: int | None
+    average_cost_usd: Decimal
+
+    @property
+    def has_samples(self) -> bool:
+        return self.trace_count > 0
+
+
+@runtime_checkable
+class VersionMetricsPort(Protocol):
+    """由 observability 实现；按「版本 + 来源」取指标。
+
+    影子验证要的正是这个切面：候选版本在 `shadow` 下的表现 vs LIVE 版本在
+    `production` 下的表现——不是同一个 Agent 的整体平均。
+    """
+
+    async def version_metrics(
+        self, asset_version_id: Id, origin: TraceOrigin, window: Window
+    ) -> VersionMetrics: ...
+
+
+__all__ = [
+    "InvocationTrace",
+    "TraceWriterPort",
+    "VersionMetrics",
+    "VersionMetricsPort",
+]
