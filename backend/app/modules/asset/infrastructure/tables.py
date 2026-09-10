@@ -27,6 +27,11 @@ class AssetRow(Base, TimestampMixin):
     connect_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     tenant_scope: Mapped[str] = mapped_column(String(24), nullable=False, default="workspace_shared")
     tenant_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: **软删除**。归档的 Agent 不再出现在列表里，但历史 Run / Trace / 评分全部保留——
+    #: 评测平台的价值一半在「当时为什么这么判」，硬删等于把证据也删了。
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class AssetVersionRow(Base, TimestampMixin):

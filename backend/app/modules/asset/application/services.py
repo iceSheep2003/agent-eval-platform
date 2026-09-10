@@ -280,6 +280,27 @@ class AssetService:
         async with UnitOfWork(self._db) as uow:
             return list(await ArtifactRepository(uow.session).list_for_asset(asset_id))
 
+    async def archive_agent(self, asset_id: str, workspace_id: str) -> None:
+        """归档：**软删除**。历史 Run / Trace / 评分全部保留，只是不再出现在列表里。
+
+        硬删会把「当时为什么这么判」的证据一起删掉，而评测平台的价值一半在那。
+        """
+        await self.get_agent(asset_id, workspace_id)
+        async with UnitOfWork(self._db) as uow:
+            await AssetRepository(uow.session).soft_delete(asset_id, self._clock.now())
+            await uow.commit()
+
+    async def restore_agent(self, asset_id: str, workspace_id: str) -> Asset:
+        """撤销归档。归档期间**指针没动过**，所以恢复就是清掉时间戳。"""
+        async with UnitOfWork(self._db) as uow:
+            assets = AssetRepository(uow.session)
+            asset = await assets.get(asset_id, workspace_id, include_deleted=True)
+            if asset is None:
+                raise NotFound("Agent", asset_id)
+            await assets.restore(asset_id)
+            await uow.commit()
+        return await self.get_agent(asset_id, workspace_id)
+
     async def list_credentials(self, workspace_id: str) -> Sequence[Credential]:
         async with UnitOfWork(self._db) as uow:
             return list(await CredentialRepository(uow.session).list_for_workspace(workspace_id))

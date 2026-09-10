@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Mapping, Protocol, runtime_checkable
 
 from ..common import Channel, Id, TraceOrigin, Usage, Window
 
@@ -40,6 +40,8 @@ class InvocationTrace:
     output: Any | None = None
     error: str | None = None
     usage: Usage = field(default_factory=Usage)
+    #: 补充事实。**只放指纹类信息**（如用了哪把密钥），不放任何明文。
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @runtime_checkable

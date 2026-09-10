@@ -73,6 +73,8 @@ class TraceRecord:
     usage: Usage
     span_count: int
     ingested_via: IngestSource
+    #: 补充事实，如 `{"secrets": {"llm_api_key": "ab12cd34"}}`（只有指纹）。
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

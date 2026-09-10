@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from ....api.deps import Actor, assert_permission, get_container
 from ....container import Container
 from ....contracts.common import TraceOrigin
+from ....contracts import CONTRACT_VERSION
 from ....contracts.errors import NotFound, PermissionDenied
 from ....contracts.identity import Permission, ResourceRef
 from ....schemas.response import list_response, ok
@@ -90,6 +91,41 @@ async def get_trace(
     )
     nodes = await service.span_tree(trace.id)
     return ok(trace_dto(trace, nodes).model_dump())
+
+
+@router.get("/traces/{trace_id}/export")
+async def export_trace(
+    trace_id: str,
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    service: Annotated[TraceService, Depends(get_trace_service)],
+) -> dict:
+    """导出一条 Trace 的**自包含**快照：Trace + 全部 Span + 归属资产/版本。
+
+    「可恢复」的前提是「可导出」——出问题时得能把整条事实链带走，
+    而不是只能在一个连不上的控制台里看。**不含任何密钥明文**。
+    """
+    trace = await service.get_trace(trace_id, actor.workspace_id)
+    assert_permission(
+        container,
+        actor,
+        Permission.TRACE_READ,
+        ResourceRef(
+            kind="asset",
+            id=trace.asset_id,
+            workspace_id=trace.workspace_id,
+            tenant_id=trace.tenant_id,
+        ),
+    )
+    nodes = await service.span_tree(trace.id)
+    return ok(
+        {
+            "export_version": 1,
+            "exported_at": container.clock.now().isoformat(),
+            "contract_version": CONTRACT_VERSION,
+            "trace": trace_dto(trace, nodes).model_dump(mode="json"),
+        }
+    )
 
 
 @router.get("/agents/{agent_id}/metrics")

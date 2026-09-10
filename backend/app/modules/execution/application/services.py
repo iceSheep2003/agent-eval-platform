@@ -47,6 +47,7 @@ from ....contracts.observability import InvocationTrace, TraceWriterPort
 from ....persistence import Command, UnitOfWork
 from ....persistence.database import Database
 from ....shared.clock import Clock, SystemClock
+from ....shared.crypto import fingerprint
 from ....shared.ids import new_id
 from ..domain.models import Run, RunResult, ScoreRecord, Trial, summarize
 from ..infrastructure.evaluators import MetricOutcome, aggregate_verdict, evaluate_metric
@@ -777,7 +778,13 @@ class InvokeService:
         finally:
             await self._runtime.teardown(handle)
 
-        trace_id = await self._record(request, version, result, started_at)
+        trace_id = await self._record(
+            request,
+            version,
+            result,
+            started_at,
+            extra_metadata=_trace_metadata(payload),
+        )
         return InvokeResult(
             output=result.output,
             error=result.error,
@@ -822,6 +829,10 @@ class InvokeService:
                 version_label=version.version_label,
             ),
             started_at,
+            extra_metadata={
+                "secrets": payload.get("__secret_fingerprints__", {}),
+                "thread_id": request.thread_id,
+            },
         )
 
         if failure is not None:
@@ -865,6 +876,11 @@ class InvokeService:
         secrets = await self._resolve_secrets(version, request)
         if secrets:
             payload["__secrets__"] = secrets
+            # 只记**指纹**：出问题时能回答「当时用的是哪把钥匙」，
+            # 但明文不进 Trace、不进导出、不进日志。
+            payload["__secret_fingerprints__"] = {
+                name: fingerprint(value) for name, value in secrets.items()
+            }
         # 记忆句柄按「版本 × 租户 × 会话」分区——少一维都会读到别人的记忆。
         memory = self._build_memory(version, request)
         if memory is not None:
@@ -930,6 +946,7 @@ class InvokeService:
         version: AssetVersionRef,
         result: InvokeResult,
         started_at: datetime,
+        extra_metadata: Mapping[str, Any] | None = None,
     ) -> Id | None:
         """落一条 Trace。**记不上也不能让对话失败**——所以整体吞异常并降级。"""
         if self._traces is None:
@@ -952,6 +969,7 @@ class InvokeService:
                     output=result.output,
                     error=result.error,
                     usage=result.usage,
+                    metadata=extra_metadata or {},
                 )
             )
         except Exception:  # noqa: BLE001 - 观测失败不该影响业务调用
@@ -973,3 +991,10 @@ def _declares_secrets(spec: Mapping[str, Any]) -> bool:
     """版本 spec 里声明了密钥引用才去解析——省掉绝大多数调用的无用查询。"""
     declared = spec.get("secrets")
     return isinstance(declared, (list, tuple)) and len(declared) > 0
+
+def _trace_metadata(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """落 Trace 时附带的补充事实——只有指纹与分区，没有明文。"""
+    return {
+        "secrets": payload.get("__secret_fingerprints__", {}),
+        "thread_id": payload.get("__thread_id__"),
+    }

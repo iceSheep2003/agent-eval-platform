@@ -129,6 +129,26 @@ async def register_agent(
     return ok((await _agent_dto(assets, asset)).model_dump())
 
 
+@router.delete("/agents/{agent_id}")
+async def archive_agent(
+    asset: Annotated[Asset, Depends(require_on_agent(Permission.ASSET_ARCHIVE))],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    """归档（软删除）。历史与证据全部保留——可用 restore 撤销。"""
+    await assets.archive_agent(asset.id, asset.workspace_id)
+    return ok({"id": asset.id, "archived": True})
+
+
+@router.post("/agents/{agent_id}/restore")
+async def restore_agent(
+    asset: Annotated[Asset, Depends(require_on_agent(Permission.ASSET_UPDATE))],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    """撤销归档。"""
+    restored = await assets.restore_agent(asset.id, asset.workspace_id)
+    return ok((await _agent_dto(assets, restored)).model_dump())
+
+
 @router.get("/agents/{agent_id}/versions")
 async def list_versions(
     asset: Annotated[Asset, Depends(require_on_agent(Permission.ASSET_READ))],

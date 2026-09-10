@@ -40,6 +40,9 @@ class TraceRow(Base, TimestampMixin):
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False, default=0)
     span_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     ingested_via: Mapped[str] = mapped_column(String(16), nullable=False, default="sdk")
+    #: 这条 Trace 的补充事实（如用了哪把密钥的**指纹**、记忆片的分区）。
+    #: 存指纹不存值——「用的哪一把」可追溯，「钥匙是什么」不外扩。
+    metadata_json: Mapped[Any] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
 
 class SpanRow(Base, TimestampMixin):

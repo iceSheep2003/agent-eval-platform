@@ -110,10 +110,15 @@ class AssetRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, asset_id: str, workspace_id: str) -> Asset | None:
+    async def get(
+        self, asset_id: str, workspace_id: str, *, include_deleted: bool = False
+    ) -> Asset | None:
+        """默认**不返回已归档的**。要读历史（导出、审计）时显式传 include_deleted。"""
         stmt = select(AssetRow).where(
             AssetRow.id == asset_id, AssetRow.workspace_id == workspace_id
         )
+        if not include_deleted:
+            stmt = stmt.where(AssetRow.deleted_at.is_(None))
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _asset(row) if row else None
 
@@ -129,7 +134,9 @@ class AssetRepository:
     async def list_for_workspace(
         self, workspace_id: str, kind: AssetKind | None = None
     ) -> Sequence[Asset]:
-        stmt = select(AssetRow).where(AssetRow.workspace_id == workspace_id)
+        stmt = select(AssetRow).where(
+            AssetRow.workspace_id == workspace_id, AssetRow.deleted_at.is_(None)
+        )
         if kind is not None:
             stmt = stmt.where(AssetRow.kind == kind.value)
         stmt = stmt.order_by(AssetRow.created_at.desc())
@@ -155,6 +162,17 @@ class AssetRepository:
     async def set_lifecycle(self, asset_id: str, lifecycle: str) -> None:
         await self._session.execute(
             update(AssetRow).where(AssetRow.id == asset_id).values(lifecycle=lifecycle)
+        )
+
+    async def soft_delete(self, asset_id: str, deleted_at: datetime) -> None:
+        await self._session.execute(
+            update(AssetRow).where(AssetRow.id == asset_id).values(deleted_at=deleted_at)
+        )
+
+    async def restore(self, asset_id: str) -> None:
+        """撤销归档。**指针没动过，所以恢复就是清掉时间戳**。"""
+        await self._session.execute(
+            update(AssetRow).where(AssetRow.id == asset_id).values(deleted_at=None)
         )
 
     async def set_owner(self, asset_id: str, owner_id: str) -> None:

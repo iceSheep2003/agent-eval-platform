@@ -218,6 +218,7 @@ class TraceService:
             usage=trace.usage,
             span_count=0,
             ingested_via="gateway",
+            metadata=dict(trace.metadata),
         )
         async with UnitOfWork(self._db) as uow:
             trace_id, _, _ = await TraceRepository(uow.session).upsert(record, ())
