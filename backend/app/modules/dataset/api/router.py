@@ -2,30 +2,54 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+import asyncio
+import json
+from pathlib import Path
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 
 from ....api.deps import Actor, assert_permission, get_container
 from ....container import Container
 from ....contracts.common import ItemValidation
+from ....contracts.common import DatasetOrigin, DatasetPurpose, TaskShape
 from ....contracts.errors import DomainError, Errors
 from ....contracts.identity import Permission
 from ....schemas.response import list_response, ok
 from ..application.services import DatasetService, ImportOutcome
 from ..domain.models import Dataset, DatasetItem, DatasetVersion, ImportSession
+from ..domain.benchmarks import (
+    compatibility_for,
+    get_benchmark_adapter,
+    list_benchmark_adapters,
+    tau2_tasks_url,
+)
 from .schemas import (
     CreateDatasetRequest,
     DatasetDTO,
     DatasetItemDTO,
     DatasetVersionDTO,
     ImportSessionDTO,
+    PullBenchmarkRequest,
     ReviewItemRequest,
 )
 
 router = APIRouter(tags=["dataset"])
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_BENCHMARK_BYTES = 50 * 1024 * 1024
+
+
+def _load_json(path: Path) -> list[dict[str, Any]]:
+    """只从配置的 benchmark 数据根目录读，API 请求不直连公网。"""
+    with path.open("rb") as source:
+        content = source.read(MAX_BENCHMARK_BYTES + 1)
+    if len(content) > MAX_BENCHMARK_BYTES:
+        raise DomainError(Errors.IMPORT_VALIDATION_FAILED, "benchmark 数据超过 50 MiB")
+    decoded = json.loads(content)
+    if not isinstance(decoded, list) or not all(isinstance(item, dict) for item in decoded):
+        raise DomainError(Errors.IMPORT_VALIDATION_FAILED, "benchmark 上游数据不是对象数组")
+    return decoded
 
 
 def get_dataset_service(container: Annotated[Container, Depends(get_container)]) -> DatasetService:
@@ -92,6 +116,133 @@ def _item_dto(item: DatasetItem) -> DatasetItemDTO:
         private=item.private.as_dict() if item.private else None,
         raw=dict(item.raw),
     )
+
+
+def _benchmark_dto(adapter: Any, root: Path | None) -> dict[str, Any]:
+    item = adapter.manifest.as_dict()
+    relative = str(adapter.manifest.storage_uri).removeprefix("benchmark-data://")
+    available = bool(root and (root / relative).exists())
+    compatible = compatibility_for(adapter).as_dict()
+    compatible["importable"] = bool(compatible["importable"] and available)
+    compatible["runnable"] = bool(compatible["runnable"] and available)
+    if not available:
+        compatible["missing_capabilities"] = [
+            *compatible["missing_capabilities"],
+            "server_dataset_snapshot",
+        ]
+    item["compatibility"] = compatible
+    item["storage"] = {"uri": adapter.manifest.storage_uri, "available": available}
+    return item
+
+
+@router.get("/benchmarks")
+async def list_benchmarks(
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+) -> dict:
+    """列出已注册 benchmark 及当前平台的真实适配状态。"""
+    assert_permission(container, actor, Permission.DATASET_READ)
+    items = [
+        _benchmark_dto(adapter, container.settings.benchmark_data_root)
+        for adapter in list_benchmark_adapters()
+    ]
+    return list_response(items, total=len(items))
+
+
+@router.get("/benchmarks/{benchmark_id}")
+async def get_benchmark(
+    benchmark_id: str,
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+) -> dict:
+    assert_permission(container, actor, Permission.DATASET_READ)
+    adapter = get_benchmark_adapter(benchmark_id)
+    if adapter is None:
+        raise DomainError(Errors.NOT_FOUND, f"benchmark {benchmark_id} 未注册")
+    return ok(_benchmark_dto(adapter, container.settings.benchmark_data_root))
+
+
+@router.post("/benchmarks/{benchmark_id}/pull")
+async def pull_benchmark(
+    benchmark_id: str,
+    payload: PullBenchmarkRequest,
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    service: Annotated[DatasetService, Depends(get_dataset_service)],
+) -> dict:
+    """从固定版本的上游拉取任务，经 adapter 转换后落为平台草稿版本。
+
+    拉取不会执行上游代码；原始记录保留在 ``item.raw``，原生评分
+    条件只保存在 ``item.private``。
+    """
+    assert_permission(container, actor, Permission.DATASET_IMPORT)
+    adapter = get_benchmark_adapter(benchmark_id)
+    if adapter is None:
+        raise DomainError(Errors.NOT_FOUND, f"benchmark {benchmark_id} 未注册")
+    manifest = adapter.manifest
+    if payload.domain not in manifest.domains:
+        raise DomainError(
+            Errors.VALIDATION_FAILED,
+            f"{benchmark_id} 不支持 domain={payload.domain}",
+        )
+    if payload.split not in manifest.splits:
+        raise DomainError(
+            Errors.VALIDATION_FAILED,
+            f"{benchmark_id} 不支持 split={payload.split}",
+        )
+    if benchmark_id != "tau2":
+        raise DomainError(Errors.VALIDATION_FAILED, f"{benchmark_id} 尚未实现拉取器")
+
+    url = tau2_tasks_url(payload.domain)
+    root = container.settings.benchmark_data_root
+    if root is None:
+        raise DomainError(Errors.IMPORT_VALIDATION_FAILED, "未配置 benchmark 数据目录")
+    source_file = root / "sources" / "tau2-bench" / "data" / "tau2" / "domains" / payload.domain / "tasks.json"
+    try:
+        upstream = await asyncio.to_thread(_load_json, source_file)
+        selected = upstream[: payload.limit] if payload.limit else upstream
+        records = adapter.materialize(selected, domain=payload.domain)
+    except DomainError:
+        raise
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise DomainError(
+            Errors.IMPORT_VALIDATION_FAILED,
+            f"读取 benchmark 失败（{source_file}）: {exc}",
+        ) from exc
+
+    source = {
+        "benchmark_id": manifest.id,
+        "benchmark_version": manifest.benchmark_version,
+        "adapter": manifest.adapter,
+        "adapter_version": manifest.adapter_version,
+        "split": payload.split,
+        "upstream_uri": url,
+        "license": manifest.license,
+    }
+    dataset = await service.create_dataset(
+        workspace_id=actor.workspace_id,
+        owner_id=actor.user_id,
+        name=payload.name or f"{manifest.name} / {payload.domain} / {payload.split}",
+        description=payload.description or manifest.description,
+        origin=DatasetOrigin.BENCHMARK,
+        purpose=DatasetPurpose.CAPABILITY,
+        task_shape=TaskShape.AGENTIC,
+        protocol=manifest.task_protocol,
+        source=source,
+    )
+    content = "\n".join(json.dumps(row, ensure_ascii=False) for row in records).encode()
+    outcome = await service.import_file(
+        dataset_id=dataset.id,
+        workspace_id=actor.workspace_id,
+        actor_id=actor.user_id,
+        filename=f"{benchmark_id}-{payload.domain}-{payload.split}.jsonl",
+        content=content,
+        version_label=payload.version_label or manifest.benchmark_version,
+    )
+    result = _dataset_dto(dataset, outcome.version).model_dump()
+    result["import"] = _session_dto(outcome.session, outcome.version).model_dump()
+    result["compatibility"] = compatibility_for(adapter).as_dict()
+    return ok(result)
 
 
 @router.post("/datasets")

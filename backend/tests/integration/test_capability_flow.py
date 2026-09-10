@@ -113,6 +113,9 @@ async def _scenario(tmp_path) -> None:
             name="orders-mcp",
             spec=MCP_SPEC,
         )
+        # MCP/知识库没有用户可见的发布通道，注册后当前配置立即可解析。
+        mcp_v1 = (await assets.list_versions(mcp.id, workspace_id))[0]
+        assert (await assets.channel_states(mcp.id, workspace_id))[Channel.LIVE].version_id == mcp_v1.id
 
         # 跨 kind 的 id 打不通：Skill 的 id 不能从 Agent 接口读到
         with pytest.raises(NotFound):
@@ -162,7 +165,6 @@ async def _scenario(tmp_path) -> None:
             provider_version_id=(await assets.list_versions(mcp.id, workspace_id))[0].id,
         )
         assert pinned.provider_channel is None
-        mcp_v1 = (await assets.list_versions(mcp.id, workspace_id))[0]
         resolved = await assets.resolve_bindings(agent_version_id, workspace_id)
         assert resolved == {skill.id: v2.id, mcp.id: mcp_v1.id}
 

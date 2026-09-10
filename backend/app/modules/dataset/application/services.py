@@ -27,6 +27,7 @@ from ....shared.clock import Clock
 from ....shared.ids import new_id
 from ..domain.importing import PreflightResult, preflight, sanitized_raw
 from ..domain.models import item_digest
+from ..domain.benchmarks import get_benchmark_adapter
 from ..domain.models import (
     Dataset,
     PrivateTaskContext,
@@ -83,6 +84,25 @@ class DatasetService:
         resolved_stages = tuple(stages) if stages else DEFAULT_STAGES[purpose]
         if not resolved_stages:
             raise DomainError(Errors.VALIDATION_FAILED, "stages 不能为空")
+        resolved_source = DatasetSource.from_dict(source)
+        if origin is DatasetOrigin.BENCHMARK:
+            if resolved_source is None or not resolved_source.benchmark_id:
+                raise DomainError(
+                    Errors.VALIDATION_FAILED,
+                    "benchmark 数据集必须提供 source.benchmark_id",
+                )
+            adapter = get_benchmark_adapter(resolved_source.benchmark_id)
+            if adapter is None:
+                raise DomainError(
+                    Errors.VALIDATION_FAILED,
+                    f"未注册的 benchmark: {resolved_source.benchmark_id}",
+                )
+            manifest = adapter.manifest
+            if protocol is not manifest.task_protocol:
+                raise DomainError(
+                    Errors.VALIDATION_FAILED,
+                    f"benchmark {manifest.id} 需要协议 {manifest.task_protocol.value}",
+                )
 
         async with UnitOfWork(self._db) as uow:
             repo = DatasetRepository(uow.session)
@@ -100,7 +120,7 @@ class DatasetService:
                 task_shape=task_shape,
                 stages=resolved_stages,
                 protocol=protocol,
-                source=DatasetSource.from_dict(source),
+                source=resolved_source,
                 created_at=self._clock.now(),
             )
             repo.add(dataset)
@@ -427,6 +447,7 @@ def _sample_ref(item: DatasetItem) -> SampleRef:
         context=dict(item.task.context),
         expected_output=item.private.expected_output if item.private else None,
         protocol=item.task.protocol.value,
+        max_steps=(item.task.limits.max_steps if item.task.limits else None),
     )
 
 

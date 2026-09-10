@@ -193,4 +193,7 @@ def _first_present(raw: Mapping[str, Any], keys: Iterable[str]) -> Any:
 
 def sanitized_raw(raw: Mapping[str, Any]) -> Mapping[str, Any]:
     """保真存储前先脱敏——原始样本里可能混着 token / cookie。"""
-    return dict(redact(raw))
+    # adapter 输出用 {raw, task, private} 包装。数据库的 raw 应保留
+    # benchmark 原始样本，而不是再包一层平台投影。
+    source = raw.get("raw") if isinstance(raw.get("raw"), Mapping) else raw
+    return dict(redact(source))

@@ -229,6 +229,7 @@ class LocalSandboxRuntime:
                 output=None,
                 error=f"执行超时（{ctx.timeout_seconds}s）",
                 duration_ms=int((time.perf_counter() - started) * 1000),
+                timed_out=True,
             )
         except Exception as exc:  # noqa: BLE001 - 被测代码的异常要如实记录，不能吞
             logger.warning("被测函数抛出异常: %r", exc)

@@ -63,6 +63,8 @@ class SampleRef:
     context: Mapping[str, JsonValue]
     expected_output: JsonValue | None
     protocol: str
+    #: 多轮协议（tool-loop / agentic）的步数上限，来自样本自己的 limits
+    max_steps: int | None = None
 
 
 @runtime_checkable

@@ -75,6 +75,16 @@ def test_mcp_http_transport_requires_url() -> None:
     assert "invalid" in _codes(result)
 
 
+def test_mcp_tools_can_be_discovered_after_connecting() -> None:
+    assert MCP.validate(
+        {
+            "kind": "mcp",
+            "endpoint": "https://mcp.internal/x",
+            "transport": "streamable-http",
+        }
+    ).ok
+
+
 def test_mcp_tool_name_must_be_stable_and_unique() -> None:
     result = MCP.validate(
         {
@@ -120,6 +130,12 @@ def _kb(**overrides) -> dict:
 
 def test_kb_valid_spec_passes() -> None:
     assert KB.validate(_kb()).ok
+
+
+def test_kb_accepts_provider_reference_instead_of_model_name() -> None:
+    spec = _kb(embedding_provider_id="embedding-bge-m3")
+    spec.pop("embedding_model")
+    assert KB.validate(spec).ok
 
 
 def test_kb_overlap_must_be_smaller_than_chunk_size() -> None:

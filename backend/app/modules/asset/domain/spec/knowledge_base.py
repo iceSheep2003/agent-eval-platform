@@ -23,10 +23,16 @@ def validate(spec: Mapping[str, Any]) -> ValidationResult:
             ValidationIssue("kind", "invalid_kind", f"应为 knowledge_base，收到 {kind!r}")
         )
 
-    for field in ("embedding_model", "index_name"):
-        value = spec.get(field)
-        if not isinstance(value, str) or not value.strip():
-            issues.append(ValidationIssue(field, "missing", "不能为空"))
+    embedding_provider = spec.get("embedding_provider_id", spec.get("embedding_model"))
+    if not isinstance(embedding_provider, str) or not embedding_provider.strip():
+        issues.append(
+            ValidationIssue("embedding_provider_id", "missing", "必须选择 Embedding Provider")
+        )
+
+    # index_name 是内部归因锚点；兼容旧 spec，但不再要求用户在管理页面维护。
+    index_name = spec.get("index_name")
+    if index_name is not None and (not isinstance(index_name, str) or not index_name.strip()):
+        issues.append(ValidationIssue("index_name", "invalid", "存在时必须是非空字符串"))
 
     chunk = spec.get("chunk_strategy")
     if chunk is None:
@@ -54,6 +60,13 @@ def validate(spec: Mapping[str, Any]) -> ValidationResult:
         top_k = retrieval.get("top_k")
         if not isinstance(top_k, int) or isinstance(top_k, bool) or top_k < MIN_TOP_K:
             issues.append(ValidationIssue("retrieval.top_k", "range", f"至少 {MIN_TOP_K}"))
+        mode = retrieval.get("mode", "hybrid")
+        if mode not in ("hybrid", "semantic", "keyword"):
+            issues.append(
+                ValidationIssue(
+                    "retrieval.mode", "invalid", "应为 hybrid、semantic 或 keyword"
+                )
+            )
 
     sources = spec.get("sources")
     if not isinstance(sources, (list, tuple)) or not sources:

@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 from ....contracts.asset import AssetQueryPort, AssetVersionRef, SecretResolverPort
 from ....contracts.memory import MemoryKey, MemorySessionPort
 from ....contracts.common import (
+    TaskProtocol,
     Channel,
     Determinism,
     EvaluationStage,
@@ -50,7 +51,9 @@ from ....shared.clock import Clock, SystemClock
 from ....shared.crypto import fingerprint
 from ....shared.ids import new_id
 from ..domain.models import Run, RunResult, ScoreRecord, Trial, summarize
+from ..domain.trial_machine import TrialMachine, TrialState
 from ..infrastructure.evaluators import MetricOutcome, aggregate_verdict, evaluate_metric
+from .plans import TrialContext, TrialOutcome, plan_for
 from ..infrastructure.repositories import (
     RunRepository,
     RunResultRepository,
@@ -64,6 +67,8 @@ TRIAL_EXECUTE = "trial.execute"
 RUN_FINALIZE = "run.finalize"
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
+#: 多轮协议的默认步数上限——样本没声明时用这个，避免 Agent 陷入死循环
+DEFAULT_MAX_STEPS = 12
 
 
 # --------------------------------------------------------------------------- #
@@ -476,6 +481,11 @@ class ExecutionHandlers:
     # -- trial.execute -------------------------------------------------------
 
     async def _execute_trial(self, command: Command, uow: UnitOfWork) -> None:
+        """跑一次 Trial。
+
+        「怎么跑」由**执行方案**决定（按样本协议分派），过程由**状态机**约束——
+        这里只负责取数据、选方案、落结果。
+        """
         run_id = command.payload["run_id"]
         trial_id = command.payload["trial_id"]
         workspace_id = command.payload["workspace_id"]
@@ -491,41 +501,90 @@ class ExecutionHandlers:
 
         await trials.mark_running(trial_id, self.clock.now())
 
+        machine = TrialMachine()
         version = await self.assets.get_version_ref(run.subject_version_id, workspace_id)
-        if version is None or not version.entrypoint:
-            await trials.set_outcome(
-                trial_id,
-                execution_status=ExecutionStatus.FAILED,
-                verdict=None,
-                output=None,
-                error="被测版本没有 entrypoint，无法执行",
-                trace_id=None,
-                duration_ms=0,
-                cost_usd=Decimal("0"),
-                ended_at=self.clock.now(),
-            )
-            await self._maybe_finalize(run_id, workspace_id, uow)
-            return
-
         sample = await self.datasets.get_sample(trial.sample_id)
-        snapshot = snapshot_from_dict(run.template_snapshot)
+        protocol = TaskProtocol(sample.protocol) if sample else TaskProtocol.QA
 
-        # **payload 只含公开输入**：expected_output 不在这里。
+        if version is None or not version.entrypoint:
+            machine.to(TrialState.FAILED)
+            outcome = TrialOutcome(
+                state=TrialState.FAILED, error="被测版本没有 entrypoint，无法执行"
+            )
+        else:
+            ctx = await self._trial_context(run, trial, sample, version, workspace_id)
+            outcome = await plan_for(protocol).execute(ctx, self.runtime, machine)
+
+        # 兜底：方案若没把状态机推到终态，这里补上。
+        # **落库状态取自状态机**，所以漏推会让 Trial 永远停在 running、Run 永远完不成——
+        # 由 handler 统一兜底，方案就不用负责记这件事。
+        if not machine.is_terminal:
+            machine.to(outcome.state)
+
+        logger.info(
+            "trial %s 协议=%s 路径=%s", trial_id, protocol.value, machine.path()
+        )
+
+        # 只有跑通的 Trial 才评分。跳过/失败的没有产出，硬打分等于伪造结论。
+        outcomes = (
+            [
+                evaluate_metric(
+                    spec.name,
+                    expected=sample.expected_output if sample else None,
+                    output=outcome.output,
+                )
+                for spec in snapshot_from_dict(run.template_snapshot).evaluators
+            ]
+            if outcome.is_settled
+            else []
+        )
+        for metric in outcomes:
+            uow.session.add(self._score_row(metric, trial, run))
+
+        await trials.set_outcome(
+            trial_id,
+            execution_status=machine.storage_status,
+            verdict=self._verdict_of(outcome, outcomes),
+            output=outcome.output,
+            error=outcome.error or outcome.note,
+            trace_id=outcome.trace_id,
+            duration_ms=outcome.duration_ms,
+            cost_usd=Decimal(str(outcome.cost_usd)),
+            ended_at=self.clock.now(),
+        )
+        await uow.session.flush()
+        await self._maybe_finalize(run_id, workspace_id, uow)
+
+    @staticmethod
+    def _verdict_of(outcome: TrialOutcome, outcomes: Sequence[MetricOutcome]) -> Verdict | None:
+        """执行状态与质量判定**正交**：没跑起来就没有质量结论。"""
+        if outcome.state is TrialState.SKIPPED:
+            return Verdict.SKIP
+        if not outcome.is_settled:
+            return None
+        verdict = aggregate_verdict(outcomes)
+        return Verdict(verdict) if verdict else None
+
+    async def _trial_context(
+        self,
+        run: Run,
+        trial: Trial,
+        sample: Any,
+        version: Any,
+        workspace_id: Id,
+    ) -> TrialContext:
+        """组装执行方案的输入。**payload 只含公开输入。**"""
+        capabilities = await self._capabilities(run, workspace_id)
         payload: dict[str, Any] = {
             "__entrypoint__": version.entrypoint,
             "input": trial.instruction,
         }
-        # 能力资产走**冻结快照**，不重新解析：资源晋级不该改变这个 Run 的结果。
-        capabilities: dict[Id, dict[str, Any]] = {}
-        for provider_asset_id, provider_version_id in (run.binding_snapshot or {}).items():
-            ref = await self.assets.get_version_ref(provider_version_id, workspace_id)
-            if ref is not None:
-                capabilities[provider_asset_id] = dict(ref.spec)
         if capabilities:
             payload["__capabilities__"] = capabilities
-        ctx = RunContext(
-            run_id=run_id,
-            trial_id=trial_id,
+
+        runtime_ctx = RunContext(
+            run_id=run.id,
+            trial_id=trial.id,
             workspace_id=workspace_id,
             tenant_id=trial.tenant_id,
             sample_id=trial.sample_id,
@@ -533,15 +592,12 @@ class ExecutionHandlers:
             timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
             cost_budget_usd=float(run.cost_budget_usd),
         )
-        # 能力资产走**冻结快照**，不重新解析：资源晋级不该改变这个 Run 的结果。
-        capabilities: dict[Id, dict[str, Any]] = {}
-        for provider_asset_id, provider_version_id in (run.binding_snapshot or {}).items():
-            ref = await self.assets.get_version_ref(provider_version_id, workspace_id)
-            if ref is not None:
-                capabilities[provider_asset_id] = dict(ref.spec)
-
-        handle = await self.runtime.provision(
-            RuntimeSpec(
+        return TrialContext(
+            run=run,
+            trial=trial,
+            sample=sample,
+            version=version,
+            runtime_spec=RuntimeSpec(
                 asset_id=version.asset_id,
                 asset_version_id=version.id,
                 workspace_id=workspace_id,
@@ -549,45 +605,19 @@ class ExecutionHandlers:
                 spec=version.spec,
                 capabilities=capabilities,
             ),
-            ctx,
+            runtime_ctx=runtime_ctx,
+            payload=payload,
+            max_steps=(sample.max_steps if sample and sample.max_steps else DEFAULT_MAX_STEPS),
         )
-        try:
-            result = await self.runtime.invoke(handle, payload, ctx)
-        finally:
-            await self.runtime.teardown(handle)
 
-        expected = sample.expected_output if sample else None
-        outcomes = [
-            evaluate_metric(
-                spec.name,
-                expected=expected,
-                output=result.output,
-                execution_error=result.error,
-            )
-            for spec in snapshot.evaluators
-        ]
-        for outcome in outcomes:
-            uow.session.add(
-                self._score_row(outcome, trial, run)
-            )
-
-        execution_status = (
-            ExecutionStatus.SUCCEEDED if result.error is None else ExecutionStatus.FAILED
-        )
-        verdict = aggregate_verdict(outcomes) if execution_status is ExecutionStatus.SUCCEEDED else None
-        await trials.set_outcome(
-            trial_id,
-            execution_status=execution_status,
-            verdict=Verdict(verdict) if verdict else None,
-            output=result.output,
-            error=result.error,
-            trace_id=result.trace_id,
-            duration_ms=result.duration_ms,
-            cost_usd=Decimal(str(result.cost_usd)),
-            ended_at=self.clock.now(),
-        )
-        await uow.session.flush()
-        await self._maybe_finalize(run_id, workspace_id, uow)
+    async def _capabilities(self, run: Run, workspace_id: Id) -> dict[Id, dict[str, Any]]:
+        """能力资产走**冻结快照**，不重新解析：资源晋级不该改变这个 Run 的结果。"""
+        resolved: dict[Id, dict[str, Any]] = {}
+        for provider_asset_id, provider_version_id in (run.binding_snapshot or {}).items():
+            ref = await self.assets.get_version_ref(provider_version_id, workspace_id)
+            if ref is not None:
+                resolved[provider_asset_id] = dict(ref.spec)
+        return resolved
 
     def _score_row(self, outcome: MetricOutcome, trial: Trial, run: Run) -> Any:
         from ..infrastructure.tables import ScoreRow

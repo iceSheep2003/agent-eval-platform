@@ -16,6 +16,7 @@ ENV_ENV = "EVAL_LOOM_ENV"
 DATA_DIR_ENV = "EVAL_LOOM_DATA_DIR"
 DATABASE_URL_ENV = "EVAL_LOOM_DATABASE_URL"
 RUNTIME_BACKEND_ENV = "RUNTIME_BACKEND"
+BENCHMARK_DATA_ROOT_ENV = "EVAL_LOOM_BENCHMARK_DATA_ROOT"
 
 DEFAULT_DATA_DIR = Path(".data/eval-loom")
 MASTER_KEY_FILENAME = ".master-key"
@@ -42,6 +43,7 @@ class Settings:
     database_url: str = ""
     runtime_backend: str = "local"
     master_key: str = ""
+    benchmark_data_root: Path | None = None
 
     # 会话
     cookie_name: str = "eval_loom_session"
@@ -98,6 +100,9 @@ class Settings:
             database_url=database_url,
             runtime_backend=os.getenv(RUNTIME_BACKEND_ENV, "local").strip().lower(),
             master_key=_resolve_master_key(env, data_dir),
+            benchmark_data_root=Path(
+                os.getenv(BENCHMARK_DATA_ROOT_ENV) or data_dir / "benchmarks"
+            ),
             cookie_secure=(env == "production"),
             session_idle_hours=_int_env("EVAL_LOOM_SESSION_IDLE_HOURS", 4),
             session_absolute_hours=_int_env("EVAL_LOOM_SESSION_ABSOLUTE_HOURS", 24),

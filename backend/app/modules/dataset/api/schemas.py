@@ -31,6 +31,15 @@ class CreateDatasetRequest(BaseModel):
     source: dict[str, Any] | None = None
 
 
+class PullBenchmarkRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str = Field(default="", max_length=512)
+    domain: str
+    split: str = "base"
+    limit: int | None = Field(default=None, ge=1, le=10_000)
+    version_label: str | None = Field(default=None, min_length=1, max_length=32)
+
+
 class ReviewItemRequest(BaseModel):
     validation: Literal["valid", "needs_review", "invalid"]
 

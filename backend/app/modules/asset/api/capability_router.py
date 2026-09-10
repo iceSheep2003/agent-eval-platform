@@ -12,9 +12,9 @@ from typing import Annotated, Sequence
 from fastapi import APIRouter, Depends, Query
 
 from ....container import Container
-from ....contracts.common import AssetKind, Channel
+from ....contracts.common import AssetKind, Channel, VersionLifecycle
 from ....contracts.errors import DomainError, Errors
-from ....contracts.identity import Permission
+from ....contracts.identity import Permission, ResourceRef
 from ....schemas.response import list_response, ok
 from ....api.deps import Actor, assert_permission, get_container
 from ..application.services import AssetService
@@ -28,12 +28,25 @@ from .schemas import (
     CreateBindingRequest,
     CreateVersionRequest,
     RegisterCapabilityRequest,
+    PromoteCapabilityRequest,
+    RollbackCapabilityRequest,
 )
 
 router = APIRouter(tags=["capability-assets"])
 
 #: 前端历史值 → 规范枚举值。`knowledge` 是页面上用的字面量，库里恒为 `knowledge_base`。
 _KIND_ALIASES = {"knowledge": AssetKind.KNOWLEDGE_BASE}
+
+_CHANNEL_PERMISSION = {
+    Channel.TEST: Permission.ASSET_UPDATE,
+    Channel.LIVESH: Permission.VERSION_PROMOTE_LIVESH,
+    Channel.LIVE: Permission.VERSION_PROMOTE_LIVE,
+}
+
+
+def _skill_only(asset: Asset) -> None:
+    if asset.kind is not AssetKind.SKILL:
+        raise DomainError(Errors.VALIDATION_FAILED, "只有 Skill 支持版本发布和回退")
 
 
 def _normalize_kind(raw: str) -> AssetKind:
@@ -198,6 +211,101 @@ async def create_capability_version(
         version_label=payload.version_label,
     )
     return ok(_version_dto(version).model_dump())
+
+
+def _assert_channel_permission(container: Container, actor: Actor, asset: Asset, channel: Channel) -> None:
+    assert_permission(
+        container,
+        actor,
+        _CHANNEL_PERMISSION[channel],
+        ResourceRef(
+            kind="asset",
+            id=asset.id,
+            workspace_id=asset.workspace_id,
+            tenant_id=asset.tenant_id,
+            owner_id=asset.owner_id,
+        ),
+    )
+
+
+@router.post("/assets/{asset_id}/versions/{version_id}/promote")
+async def promote_skill_version(
+    version_id: str,
+    payload: PromoteCapabilityRequest,
+    asset: Annotated[Asset, Depends(require_on_capability(Permission.ASSET_READ))],
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    _skill_only(asset)
+    channel = Channel(payload.channel)
+    _assert_channel_permission(container, actor, asset, channel)
+    version = await assets.get_version(version_id, asset.workspace_id)
+    if version is None or version.asset_id != asset.id:
+        raise DomainError(Errors.NOT_FOUND, "Skill 版本不存在")
+    await assets.set_version_lifecycle(version.id, VersionLifecycle.READY, asset.workspace_id)
+    await assets.bind_channel(
+        asset_id=asset.id,
+        channel=channel,
+        version_id=version.id,
+        workspace_id=asset.workspace_id,
+        actor_id=actor.user_id,
+    )
+    return ok((await _asset_dto(assets, asset)).model_dump())
+
+
+@router.post("/assets/{asset_id}/rollback")
+async def rollback_skill_version(
+    payload: RollbackCapabilityRequest,
+    asset: Annotated[Asset, Depends(require_on_capability(Permission.ASSET_READ))],
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    _skill_only(asset)
+    channel = Channel(payload.channel)
+    _assert_channel_permission(container, actor, asset, channel)
+    version = await assets.get_version(payload.target_version_id, asset.workspace_id)
+    if version is None or version.asset_id != asset.id:
+        raise DomainError(Errors.NOT_FOUND, "回退目标版本不存在")
+    await assets.bind_channel(
+        asset_id=asset.id,
+        channel=channel,
+        version_id=version.id,
+        workspace_id=asset.workspace_id,
+        actor_id=actor.user_id,
+    )
+    return ok((await _asset_dto(assets, asset)).model_dump())
+
+
+@router.put("/assets/{asset_id}/config")
+async def update_capability_config(
+    payload: CreateVersionRequest,
+    asset: Annotated[Asset, Depends(require_on_capability(Permission.ASSET_UPDATE))],
+    actor: Actor,
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    """更新 MCP/知识库当前配置。
+
+    底层仍冻结修订供评测复现，但管理面不向用户暴露版本与发布通道。
+    Skill 必须继续走版本接口。
+    """
+    if asset.kind is AssetKind.SKILL:
+        raise DomainError(Errors.VALIDATION_FAILED, "Skill 配置必须通过创建新版本修改")
+    version = await assets.create_version(
+        asset_id=asset.id,
+        workspace_id=asset.workspace_id,
+        created_by=actor.user_id,
+        spec=payload.spec,
+    )
+    await assets.bind_channel(
+        asset_id=asset.id,
+        channel=Channel.LIVE,
+        version_id=version.id,
+        workspace_id=asset.workspace_id,
+        actor_id=actor.user_id,
+    )
+    return ok((await _asset_dto(assets, asset)).model_dump())
 
 
 @router.get("/assets/{asset_id}/channels")

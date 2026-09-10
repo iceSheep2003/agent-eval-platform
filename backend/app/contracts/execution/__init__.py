@@ -93,6 +93,8 @@ class InvokeResult:
     duration_ms: int | None = None
     cost_usd: float = 0.0
     usage: Usage = field(default_factory=Usage)
+    #: 失败原因是超时。**超时与失败要分开**——前者通常调大超时重试，后者要修代码。
+    timed_out: bool = False
     #: 实际命中的版本标签，便于调用方展示「这次打的是哪个版本」。
     version_label: str | None = None
     #: **本次调用的 id**。编排拿到后应当原样作为子调用的 `parent_invocation_id` 传下去，

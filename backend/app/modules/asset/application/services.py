@@ -762,6 +762,13 @@ class AssetService:
                 ChannelBinding(asset.id, Channel.TEST, version.id, now, owner_id),
                 workspace_id,
             )
+            # MCP 与知识库对用户只有一份“当前配置”。LIVE 指针仅作为内部
+            # 解析锚点，保证 Agent 绑定后立即可用；只有 Skill 暴露发布通道。
+            if kind in (AssetKind.MCP, AssetKind.KNOWLEDGE_BASE):
+                await ChannelBindingRepository(uow.session).upsert(
+                    ChannelBinding(asset.id, Channel.LIVE, version.id, now, owner_id),
+                    workspace_id,
+                )
             await uow.commit()
         return asset
 
@@ -1041,7 +1048,13 @@ class AssetService:
         if channel is None:
             return None
         version = await self.version_of_channel(binding.provider_asset_id, channel, workspace_id)
-        return version.id if version is not None else None
+        if version is not None:
+            return version.id
+        # 兼容升级前创建、尚未写入内部 LIVE 指针的 MCP/知识库。
+        if binding.provider_kind in (AssetKind.MCP, AssetKind.KNOWLEDGE_BASE):
+            versions = await self.list_versions(binding.provider_asset_id, workspace_id)
+            return versions[0].id if versions else None
+        return None
 
     async def attribution_targets(
         self, *, workspace_id: str, asset_id: str, version_id: str | None = None

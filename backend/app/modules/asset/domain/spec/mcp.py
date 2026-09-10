@@ -52,9 +52,9 @@ def validate(spec: Mapping[str, Any]) -> ValidationResult:
         )
 
     tools = spec.get("tools")
-    if not isinstance(tools, (list, tuple)) or not tools:
-        issues.append(ValidationIssue("tools", "missing", "至少声明一个工具"))
-    else:
+    if tools is not None and not isinstance(tools, (list, tuple)):
+        issues.append(ValidationIssue("tools", "invalid", "应为工具数组"))
+    elif isinstance(tools, (list, tuple)):
         seen: set[str] = set()
         for index, tool in enumerate(tools):
             field = f"tools[{index}]"

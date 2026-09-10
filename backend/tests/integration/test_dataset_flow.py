@@ -17,6 +17,7 @@ from backend.app.contracts.common import (
     EvaluationStage,
     ItemValidation,
     TaskShape,
+    TaskProtocol,
 )
 from backend.app.contracts.errors import DomainError
 from backend.app.seed import seed
@@ -59,6 +60,33 @@ async def _scenario(tmp_path) -> None:
         workspace_id = seeded["workspace_id"]
         owner = seeded["admin"]
         service = container.datasets
+
+        # benchmark 数据集不能只打一个标签：必须绑定已注册的 adapter，
+        # 且样本执行协议要与 manifest 一致。
+        with pytest.raises(DomainError):
+            await service.create_dataset(
+                workspace_id=workspace_id,
+                owner_id=owner,
+                name="伪 benchmark",
+                origin=DatasetOrigin.BENCHMARK,
+            )
+        benchmark = await service.create_dataset(
+            workspace_id=workspace_id,
+            owner_id=owner,
+            name="tau2 airline",
+            origin=DatasetOrigin.BENCHMARK,
+            task_shape=TaskShape.AGENTIC,
+            protocol=TaskProtocol.AGENTIC,
+            source={
+                "benchmark_id": "tau2",
+                "benchmark_version": "1.0.0",
+                "adapter": "backend.app.modules.dataset.domain.benchmarks:Tau2DatasetAdapter",
+                "adapter_version": "1.0.0",
+                "split": "base",
+            },
+        )
+        assert benchmark.source is not None
+        assert benchmark.source.benchmark_id == "tau2"
 
         # purpose=REGRESSION 应带出默认阶段（regression + release）
         dataset = await service.create_dataset(

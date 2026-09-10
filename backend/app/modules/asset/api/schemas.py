@@ -38,6 +38,17 @@ class CreateVersionRequest(BaseModel):
     version_label: str | None = Field(default=None, max_length=32)
 
 
+class PromoteCapabilityRequest(BaseModel):
+    channel: Literal["test", "livesh", "live"]
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class RollbackCapabilityRequest(BaseModel):
+    channel: Literal["test", "livesh", "live"]
+    target_version_id: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=1, max_length=512)
+
+
 class SdkKeyRequest(BaseModel):
     name: str = Field(default="default", max_length=128)
     expires_at: datetime | None = None
