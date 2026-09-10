@@ -126,6 +126,7 @@ async def _scenario(tmp_path) -> None:
             actor_id=owner,
             consumer_asset_id=agent.id,
             provider_asset_id=mcp.id,
+            resolve_mode="channel",
         )
         await assets.bind_channel(
             asset_id=agent.id,

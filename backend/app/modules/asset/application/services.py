@@ -12,6 +12,7 @@ from typing import Any, Mapping, Sequence
 
 from ....contracts.asset import (
     AssetRef,
+    BindingGap,
     AssetVersionRef,
     CapabilityAttributionRef,
     CredentialContext,
@@ -22,6 +23,7 @@ from ....contracts.common import (
     CredentialKind,
     ValidationResult,
     VersionLifecycle,
+    current_channel,
 )
 from ....contracts.errors import DomainError, Errors, NotFound
 from ....contracts.execution import EntrypointProbePort
@@ -905,7 +907,9 @@ class AssetService:
         actor_id: str,
         consumer_asset_id: str,
         provider_asset_id: str,
-        resolve_mode: ResolveMode = "channel",
+        #: 默认 follow —— Agent 在哪个通道，就用能力资产在那个通道的版本。
+        #: 「先配 TEST、再同步 LIVE」因此是自动的，不需要手工同步动作。
+        resolve_mode: ResolveMode = "follow",
         provider_channel: Channel | None = None,
         provider_version_id: str | None = None,
         consumer_version_id: str | None = None,
@@ -915,7 +919,7 @@ class AssetService:
         consumer = await self.get_agent(consumer_asset_id, workspace_id)
         provider = await self.get_capability(provider_asset_id, workspace_id)
 
-        if resolve_mode not in ("channel", "pinned"):
+        if resolve_mode not in ("follow", "channel", "pinned"):
             raise DomainError(Errors.VALIDATION_FAILED, f"未知的解析方式 {resolve_mode!r}")
 
         if consumer_version_id is not None:
@@ -1014,6 +1018,11 @@ class AssetService:
         if version is None:
             raise NotFound("版本", consumer_version_id)
 
+        # `follow` 模式的引用要跟着消费方走，所以先把消费方当前在哪个通道算出来。
+        # 「最高的那个」——晋级到 LIVESH 后版本仍绑在 TEST 上。
+        consumer_channel = current_channel(
+            consumer_version_id, await self.channel_map(version.asset_id, workspace_id)
+        )
         bindings = await self.list_bindings_of_consumer(
             version.asset_id, workspace_id, consumer_version_id
         )
@@ -1025,7 +1034,7 @@ class AssetService:
         for binding in ordered:
             if binding.provider_asset_id in resolved:
                 continue
-            version_id = await self._resolve_one(binding, workspace_id)
+            version_id = await self._resolve_one(binding, workspace_id, consumer_channel)
             if version_id is not None:
                 resolved[binding.provider_asset_id] = version_id
 
@@ -1035,16 +1044,73 @@ class AssetService:
                 resolved[provider_asset_id] = version_id
         return resolved
 
+    async def unresolved_bindings_at(
+        self, consumer_version_id: str, channel: Channel, workspace_id: str
+    ) -> Sequence[BindingGap]:
+        """实现 `contracts.asset.AssetQueryPort`：晋级门禁用。
+
+        只查**会跟随消费方走**的引用（`follow`）；`channel` 模式固定跟自己的通道，
+        `pinned` 锁死版本，两者都不受消费方通道影响。
+        """
+        version = await self.get_version(consumer_version_id, workspace_id)
+        if version is None:
+            return ()
+        bindings = await self.list_bindings_of_consumer(
+            version.asset_id, workspace_id, consumer_version_id
+        )
+        seen: set[str] = set()
+        gaps: list[BindingGap] = []
+        for binding in bindings:
+            if binding.provider_asset_id in seen or binding.resolve_mode != "follow":
+                continue
+            seen.add(binding.provider_asset_id)
+            resolved = await self.version_of_channel(
+                binding.provider_asset_id, channel, workspace_id
+            )
+            if resolved is not None:
+                continue
+            provider = await self.get_asset(binding.provider_asset_id, workspace_id)
+            gaps.append(
+                BindingGap(
+                    provider_asset_id=binding.provider_asset_id,
+                    provider_name=provider.name if provider else binding.provider_asset_id,
+                    provider_kind=binding.provider_kind.value,
+                    channel=channel,
+                    resolve_mode=binding.resolve_mode,
+                )
+            )
+        return gaps
+
     async def resolve_binding_version(
         self, binding: AssetBinding, workspace_id: str
     ) -> str | None:
-        """单条引用的解析结果。列表接口用它把「跟随通道」显示成具体版本。"""
-        return await self._resolve_one(binding, workspace_id)
+        """单条引用的解析结果。列表接口用它把「跟随通道」显示成具体版本。
 
-    async def _resolve_one(self, binding: AssetBinding, workspace_id: str) -> str | None:
+        `follow` 模式需要消费方当前所在通道——绑定挂在 Agent 级（无具体版本）时，
+        按该 Agent 最新的版本算。
+        """
+        version_id = binding.consumer_version_id
+        if version_id is None:
+            versions = await self.list_versions(binding.consumer_asset_id, workspace_id)
+            version_id = versions[0].id if versions else None
+        channel = None
+        if version_id is not None:
+            channel = current_channel(
+                version_id, await self.channel_map(binding.consumer_asset_id, workspace_id)
+            )
+        return await self._resolve_one(binding, workspace_id, channel)
+
+    async def _resolve_one(
+        self, binding: AssetBinding, workspace_id: str, consumer_channel: Channel | None = None
+    ) -> str | None:
         if binding.resolve_mode == "pinned":
             return binding.provider_version_id
-        channel = binding.target_channel()
+        if binding.resolve_mode == "follow":
+            # 跟随消费方：Agent 在哪，就用 provider 在那个通道的版本。
+            # 消费方还没进任何通道时无从跟随——不猜。
+            channel = consumer_channel
+        else:
+            channel = binding.target_channel()
         if channel is None:
             return None
         version = await self.version_of_channel(binding.provider_asset_id, channel, workspace_id)

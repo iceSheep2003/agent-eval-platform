@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Mapping, Sequence
 
-from ....contracts.common import Channel
+from ....contracts.common import CHANNELS_ASCENDING, Channel, current_channel
 from ....contracts.identity import Permission
 
 
@@ -32,11 +32,14 @@ class CheckName(StrEnum):
     SHADOW_ROUTE = "shadow_route"
     #: 影子指标不劣于基线（成功率、P95 延迟）
     SHADOW_VERIFICATION = "shadow_verification"
+    #: 该版本引用的能力资产在**目标通道**都有版本。
+    #: 否则晋级会带出悬空引用——Agent 到了 LIVE，引用的 Skill 还在 TEST。
+    ASSETS_READY = "assets_ready"
 
 
-#: 通道由低到高。**一个版本可以同时占据多个通道**——晋级到 LIVESH 后它仍绑在 TEST 上
-#: （TEST 始终指向最新候选），所以判断「当前在哪个通道」必须取最高的那个。
-CHANNELS_ASCENDING: tuple[Channel, ...] = (Channel.TEST, Channel.LIVESH, Channel.LIVE)
+# 通道顺序与「版本当前在哪个通道」的判断已提到契约层——
+# asset 解析 `follow` 模式的引用时也要用同一套规则，不能再各写一遍。
+CHANNELS_ASCENDING = CHANNELS_ASCENDING
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,24 +132,6 @@ class LifecyclePolicy:
         return cls(transitions=tuple(TransitionRule.from_dict(item) for item in transitions))
 
 
-def current_channel(
-    version_id: str, bindings: Mapping[Channel, str | None]
-) -> Channel | None:
-    """该版本占据的**最高**通道。
-
-    用 `bindings.items()` 的顺序会先撞上 TEST，导致已经到 LIVESH 的版本被判成
-    「从 TEST 跳到 LIVE」而拒绝。
-    """
-    return next(
-        (
-            channel
-            for channel in reversed(CHANNELS_ASCENDING)
-            if bindings.get(channel) == version_id
-        ),
-        None,
-    )
-
-
 #: 默认策略。改这里就等于改全平台的治理规则；工作区可以覆盖。
 DEFAULT_POLICY = LifecyclePolicy(
     transitions=(
@@ -157,6 +142,8 @@ DEFAULT_POLICY = LifecyclePolicy(
             checks=(
                 # 离线验证：门禁过了才进影子；没配影子路由就进 LIVESH 等于没验证
                 CheckSpec(CheckName.PROMOTION_GATE, params={"stage": "release"}),
+                # 引用的 Skill / MCP / 知识库也得跟着上来，否则是悬空引用
+                CheckSpec(CheckName.ASSETS_READY),
                 CheckSpec(CheckName.SHADOW_ROUTE),
             ),
         ),
@@ -167,6 +154,7 @@ DEFAULT_POLICY = LifecyclePolicy(
             requires_reauth=True,
             checks=(
                 CheckSpec(CheckName.PROMOTION_GATE, params={"stage": "release"}),
+                CheckSpec(CheckName.ASSETS_READY),
                 # 影子验证：在真实流量分布下不劣于当前 LIVE 版本
                 CheckSpec(
                     CheckName.SHADOW_VERIFICATION,

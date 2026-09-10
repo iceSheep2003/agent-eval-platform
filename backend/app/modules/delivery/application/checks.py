@@ -87,6 +87,30 @@ async def promotion_gate(ctx: CheckContext) -> CheckOutcome:
     return CheckOutcome.ok(rule_name)
 
 
+#: 资产类型的中文名，用在阻断理由里
+_KIND_LABEL = {"skill": "Skill", "mcp": "MCP", "knowledge_base": "知识库"}
+
+
+async def assets_ready(ctx: CheckContext) -> CheckOutcome:
+    """该版本引用的能力资产在**目标通道**都有版本。
+
+    只查 `follow` 模式的引用——它们跟着消费方走。`channel` 模式固定跟自己的通道、
+    `pinned` 锁死版本，两者都不受这次晋级影响。
+    """
+    rule_name = CheckName.ASSETS_READY.value
+    gaps = await ctx.assets.unresolved_bindings_at(
+        ctx.version_id, ctx.to_channel, ctx.workspace_id
+    )
+    if not gaps:
+        return CheckOutcome.ok(rule_name)
+    detail = "；".join(
+        f"{_KIND_LABEL.get(gap.provider_kind, gap.provider_kind)}"
+        f"「{gap.provider_name}」在 {gap.channel.value} 通道还没有版本"
+        for gap in gaps
+    )
+    return CheckOutcome.blocked(rule_name, f"引用的能力资产未就绪：{detail}")
+
+
 async def shadow_route(ctx: CheckContext) -> CheckOutcome:
     """影子路由已配置、启用，且候选就是本次要晋级的版本。"""
     rule_name = CheckName.SHADOW_ROUTE.value
@@ -201,6 +225,14 @@ class CheckSchema:
 
 #: 检查项的自描述。策略编辑器读它来渲染表单，**不用在前端写死参数**。
 CHECK_SCHEMAS: Mapping[CheckName, CheckSchema] = {
+    CheckName.ASSETS_READY: CheckSchema(
+        name=CheckName.ASSETS_READY,
+        label="引用的能力资产已就绪",
+        description=(
+            "Agent 引用的 Skill / MCP / 知识库在目标通道必须都有版本，"
+            "否则晋级会带出悬空引用"
+        ),
+    ),
     CheckName.PROMOTION_GATE: CheckSchema(
         name=CheckName.PROMOTION_GATE,
         label="发布门禁",
@@ -239,6 +271,7 @@ CHECK_SCHEMAS: Mapping[CheckName, CheckSchema] = {
 
 
 CHECKS: Mapping[CheckName, CheckFn] = {
+    CheckName.ASSETS_READY: assets_ready,
     CheckName.PROMOTION_GATE: promotion_gate,
     CheckName.SHADOW_ROUTE: shadow_route,
     CheckName.SHADOW_VERIFICATION: shadow_verification,

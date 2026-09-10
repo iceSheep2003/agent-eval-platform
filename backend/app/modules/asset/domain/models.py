@@ -16,8 +16,15 @@ AssetLifecycle = Literal["draft", "active", "archived"]
 ConnectType = Literal["sdk", "github", "package"]
 TenantScope = Literal["workspace_shared", "tenant_bound"]
 CredentialStatus = Literal["active", "expiring", "revoked"]
-#: 引用解析方式：跟随通道（默认）或锁定具体版本。
-ResolveMode = Literal["channel", "pinned"]
+#: 引用解析方式。
+#:
+#: - `follow`（默认）：**跟随消费方所在通道**——Agent 在 TEST 就用 Skill 的 TEST 版本，
+#:   Agent 晋级到 LIVE 就用 Skill 的 LIVE 版本。这就是「先配 TEST、再同步 LIVE」，
+#:   而且「同步」是自动的，不需要手工动作。
+#: - `channel`：固定跟 provider 的某个通道（默认 LIVE），不受 Agent 通道影响。
+#:   适合共享的稳定通用能力。
+#: - `pinned`：锁死具体版本。用于复现实验或临时试验。
+ResolveMode = Literal["follow", "channel", "pinned"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +97,11 @@ class AssetBinding:
     created_at: datetime
 
     def target_channel(self) -> Channel | None:
-        """`resolve_mode=channel` 时的目标通道；默认 `live`。"""
+        """**固定**的目标通道；`follow` 与 `pinned` 都没有固定通道。
+
+        `follow` 的目标通道由消费方当前所在通道决定，不在绑定上——
+        所以这里返回 None，由解析时传入。
+        """
         if self.resolve_mode != "channel":
             return None
         return self.provider_channel or Channel.LIVE

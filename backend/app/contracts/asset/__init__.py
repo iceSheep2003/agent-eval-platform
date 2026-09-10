@@ -102,6 +102,21 @@ class AssetVersionRef:
     spec: Mapping[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class BindingGap:
+    """一条引用在目标通道解析不出 provider 版本。
+
+    典型场景：Agent 引用的 Skill 还在 TEST，Agent 却要晋级到 LIVE——
+    晋级成功的话，Agent 到生产就会带着一个悬空引用。
+    """
+
+    provider_asset_id: Id
+    provider_name: str
+    provider_kind: str
+    channel: Channel
+    resolve_mode: str
+
+
 @runtime_checkable
 class AssetQueryPort(Protocol):
     """由 asset 实现；evaluation 校验资产存在，execution 取版本启动 Runtime。"""
@@ -111,6 +126,15 @@ class AssetQueryPort(Protocol):
     async def get_version_ref(
         self, version_id: Id, workspace_id: Id
     ) -> AssetVersionRef | None: ...
+
+    async def unresolved_bindings_at(
+        self, consumer_version_id: Id, channel: Channel, workspace_id: Id
+    ) -> Sequence[BindingGap]:
+        """该版本引用的能力资产里，哪些在 `channel` 上还没有版本。
+
+        晋级门禁用它——空列表 = 引用都就绪。
+        """
+        ...
 
     async def version_of_channel(
         self, asset_id: Id, channel: Channel, workspace_id: Id
@@ -176,6 +200,7 @@ class SecretResolverPort(Protocol):
 
 __all__ = [
     "AssetQueryPort",
+    "BindingGap",
     "AttributionTargetPort",
     "ChannelWritePort",
     "AssetRef",

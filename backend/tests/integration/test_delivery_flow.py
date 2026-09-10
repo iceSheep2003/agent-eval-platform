@@ -278,11 +278,12 @@ async def _scenario(tmp_path) -> None:
             LifecyclePolicy,
         )
 
-        # 默认策略：TEST→LIVESH 要门禁 + 影子路由
+        # 默认策略：TEST→LIVESH 要门禁 + 引用就绪 + 影子路由
         default = await container.delivery.policy_for(workspace_id)
         to_livesh = default.rule_for(Channel.TEST, Channel.LIVESH)
         assert [c.name for c in to_livesh.enabled_checks()] == [
             CheckName.PROMOTION_GATE,
+            CheckName.ASSETS_READY,
             CheckName.SHADOW_ROUTE,
         ]
 
@@ -297,9 +298,10 @@ async def _scenario(tmp_path) -> None:
             workspace_id, LifecyclePolicy.from_dict(payload), owner
         )
         effective = await container.delivery.policy_for(workspace_id)
-        assert [c.name for c in effective.rule_for(Channel.TEST, Channel.LIVESH).enabled_checks()] == [
-            CheckName.PROMOTION_GATE
-        ]
+        assert [
+            c.name
+            for c in effective.rule_for(Channel.TEST, Channel.LIVESH).enabled_checks()
+        ] == [CheckName.PROMOTION_GATE, CheckName.ASSETS_READY]
 
         # 重置回默认
         await container.delivery.reset_policy(workspace_id)

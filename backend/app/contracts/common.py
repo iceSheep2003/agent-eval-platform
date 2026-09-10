@@ -40,6 +40,29 @@ class Channel(StrEnum):
     LIVE = "live"
 
 
+#: 通道由低到高。**一个版本可以同时占据多个通道**——晋级到 LIVESH 后它仍绑在 TEST 上
+#: （TEST 始终指向最新候选），所以判断「当前在哪个通道」必须取最高的那个。
+CHANNELS_ASCENDING: tuple[Channel, ...] = (Channel.TEST, Channel.LIVESH, Channel.LIVE)
+
+
+def current_channel(
+    version_id: Id, bindings: Mapping[Channel, Id | None]
+) -> Channel | None:
+    """该版本占据的**最高**通道。
+
+    用 `bindings.items()` 的顺序会先撞上 TEST，导致已经到 LIVESH 的版本被判成
+    「从 TEST 跳到 LIVE」而拒绝。
+    """
+    return next(
+        (
+            channel
+            for channel in reversed(CHANNELS_ASCENDING)
+            if bindings.get(channel) == version_id
+        ),
+        None,
+    )
+
+
 class VersionLifecycle(StrEnum):
     """版本自身生命周期。「哪个通道正在用」由 ChannelBinding 表达，不是版本状态。"""
 

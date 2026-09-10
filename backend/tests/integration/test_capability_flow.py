@@ -139,6 +139,7 @@ async def _scenario(tmp_path) -> None:
             actor_id=owner_id,
             consumer_asset_id=agent.id,
             provider_asset_id=skill.id,
+            resolve_mode="channel",
         )
         assert binding.resolve_mode == "channel"
         assert binding.target_channel() is Channel.LIVE

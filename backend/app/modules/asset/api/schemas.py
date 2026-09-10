@@ -191,7 +191,8 @@ class CapabilityAssetDTO(BaseModel):
 
 class CreateBindingRequest(BaseModel):
     provider_asset_id: str
-    resolve_mode: Literal["channel", "pinned"] = "channel"
+    #: follow（默认）= 跟随 Agent 所在通道；channel = 固定跟 provider 的通道；pinned = 锁版本
+    resolve_mode: Literal["follow", "channel", "pinned"] = "follow"
     #: resolve_mode=channel 时有效，缺省 live。
     provider_channel: Literal["test", "livesh", "live"] | None = None
     #: resolve_mode=pinned 时必填。

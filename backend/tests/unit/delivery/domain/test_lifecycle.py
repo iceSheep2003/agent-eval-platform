@@ -36,6 +36,7 @@ def test_default_checks_per_transition() -> None:
     assert to_livesh is not None
     assert [spec.name for spec in to_livesh.enabled_checks()] == [
         CheckName.PROMOTION_GATE,
+        CheckName.ASSETS_READY,
         CheckName.SHADOW_ROUTE,
     ]
     assert to_livesh.permission is Permission.VERSION_PROMOTE_LIVESH
@@ -45,6 +46,7 @@ def test_default_checks_per_transition() -> None:
     assert to_live is not None
     assert [spec.name for spec in to_live.enabled_checks()] == [
         CheckName.PROMOTION_GATE,
+        CheckName.ASSETS_READY,
         CheckName.SHADOW_VERIFICATION,
     ]
     assert to_live.permission is Permission.VERSION_PROMOTE_LIVE
@@ -87,7 +89,10 @@ def test_disabling_a_check_takes_effect() -> None:
     policy = LifecyclePolicy.from_dict(payload)
     to_livesh = policy.rule_for(Channel.TEST, Channel.LIVESH)
     assert to_livesh is not None
-    assert [spec.name for spec in to_livesh.enabled_checks()] == [CheckName.PROMOTION_GATE]
+    assert [spec.name for spec in to_livesh.enabled_checks()] == [
+        CheckName.PROMOTION_GATE,
+        CheckName.ASSETS_READY,
+    ]
 
 
 def test_tuning_thresholds_takes_effect() -> None:
