@@ -19,6 +19,7 @@ from ..domain.models import (
     Credential,
     ResourceSecret,
     SecretBinding,
+    WORKSPACE_DEFAULT_VERSION,
 )
 from .tables import (
     ArtifactRow,
@@ -593,14 +594,55 @@ class SecretBindingRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_for_version(self, asset_version_id: str) -> Sequence[SecretBinding]:
+    async def list_for_scope(
+        self, workspace_id: str, asset_version_id: str | None
+    ) -> Sequence[SecretBinding]:
+        """取**该版本 + 该工作区默认**两层的绑定。
+
+        两层都取回来，让调用方做「具体版本覆盖默认」的合并——查询里做分层
+        再合并会把「谁覆盖了谁」藏进 SQL，出问题时看不出来。
+        """
+        scopes = [WORKSPACE_DEFAULT_VERSION]
+        if asset_version_id is not None:
+            scopes.append(asset_version_id)
         stmt = select(SecretBindingRow).where(
-            SecretBindingRow.asset_version_id == asset_version_id
+            SecretBindingRow.workspace_id == workspace_id,
+            SecretBindingRow.asset_version_id.in_(scopes),
         )
         return [
             _secret_binding(row)
             for row in (await self._session.execute(stmt)).scalars().all()
         ]
+
+    async def list_workspace_defaults(
+        self, workspace_id: str
+    ) -> Sequence[SecretBinding]:
+        stmt = select(SecretBindingRow).where(
+            SecretBindingRow.workspace_id == workspace_id,
+            SecretBindingRow.asset_version_id == WORKSPACE_DEFAULT_VERSION,
+        )
+        return [
+            _secret_binding(row)
+            for row in (await self._session.execute(stmt)).scalars().all()
+        ]
+
+    async def delete(
+        self,
+        workspace_id: str,
+        asset_version_id: str,
+        channel: Channel,
+        secret_name: str,
+    ) -> bool:
+        """解绑。返回是否真的删掉了——调用方据此决定要不要报 404。"""
+        result = await self._session.execute(
+            delete(SecretBindingRow).where(
+                SecretBindingRow.workspace_id == workspace_id,
+                SecretBindingRow.asset_version_id == asset_version_id,
+                SecretBindingRow.channel == channel.value,
+                SecretBindingRow.secret_name == secret_name,
+            )
+        )
+        return bool(result.rowcount)
 
     async def upsert(self, binding: SecretBinding) -> None:
         """按 `(版本, 通道, 密钥名)` 覆盖。重新绑 = 改指针，不新增行。"""

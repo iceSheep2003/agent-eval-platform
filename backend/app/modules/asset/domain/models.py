@@ -161,9 +161,29 @@ class ResourceSecret:
     created_at: datetime
 
 
+#: 工作区默认绑定的「版本 id」。
+#:
+#: 用保留值而不是 NULL：`UNIQUE(asset_version_id, channel, secret_name)` 里
+#: NULL 互不相等，能插进多行——默认绑定就会重复。用 `*` 则天然受唯一约束保护。
+WORKSPACE_DEFAULT_VERSION = "*"
+
+#: 平台内置的**模型配置**密钥名。Agent 不必声明，平台自动注入；
+#: Agent 在 spec 里声明同名项即可覆盖。
+MODEL_BASE_URL = "model_base_url"
+MODEL_AUTH_TOKEN = "model_auth_token"
+MODEL_NAME = "model_name"
+
+#: 三个模型配置键，按固定顺序——表单与注入都按这个顺序。
+MODEL_SECRET_NAMES: tuple[str, ...] = (MODEL_BASE_URL, MODEL_AUTH_TOKEN, MODEL_NAME)
+
+
 @dataclass(frozen=True, slots=True)
 class SecretBinding:
-    """Agent 版本 + 通道 → 用哪把密钥。`version_id` 为空表示「该 Agent 所有版本共用」。"""
+    """某作用域 + 通道 → 用哪把密钥。
+
+    `asset_version_id == WORKSPACE_DEFAULT_VERSION` 时是**工作区默认**，
+    对该工作区所有 Agent 生效；具体版本的绑定会**覆盖**它。
+    """
 
     id: Id
     workspace_id: Id
@@ -173,3 +193,7 @@ class SecretBinding:
     resource_secret_id: Id
     bound_by: Id
     created_at: datetime
+
+    @property
+    def is_workspace_default(self) -> bool:
+        return self.asset_version_id == WORKSPACE_DEFAULT_VERSION

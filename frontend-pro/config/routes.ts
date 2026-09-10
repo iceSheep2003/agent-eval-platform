@@ -15,6 +15,12 @@ export default [
   },
   { path: '/agents/:id', component: './agent-detail', hideInMenu: true },
   {
+    path: '/secrets',
+    name: '密钥管理',
+    icon: 'KeyOutlined',
+    component: './secrets',
+  },
+  {
     path: '/skills',
     name: 'Skill 管理',
     icon: 'BranchesOutlined',

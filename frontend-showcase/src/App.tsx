@@ -4,6 +4,7 @@ import AppShell from './components/AppShell';
 import AgentChatPage from './pages/AgentChatPage';
 import LoginPage from './pages/LoginPage';
 import HubPage from './pages/HubPage';
+import DocsPage from './pages/DocsPage';
 import HubsPage from './pages/HubsPage';
 import { useSession } from './session';
 
@@ -36,6 +37,8 @@ export default function App() {
           path="/hubs/:hubId/agents/:agentId"
           element={<AgentChatPage />}
         />
+        <Route path="/docs" element={<DocsPage />} />
+        <Route path="/docs/:slug" element={<DocsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>

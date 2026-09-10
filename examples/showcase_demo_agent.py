@@ -30,6 +30,7 @@ _REFUND_ANSWER = "订单 {order_id} 符合退款条件，可以退款。"
 async def demo_support_agent(
     input: str,  # noqa: A002 - 参数名由平台调用协议决定
     messages: Sequence[Mapping[str, Any]] = (),
+    secrets: Mapping[str, str] | None = None,
 ) -> AsyncIterator[str]:
     """**异步生成器**：逐段吐模型的增量。
 
@@ -40,7 +41,8 @@ async def demo_support_agent(
     兜底也走同一个生成器，调用方不必区分。
     """
     history = _build_history(input, messages)
-    client = ChatClient()
+    # 凭证由平台按「版本 × 通道」注入；没注入就退回环境变量（本地开发）。
+    client = ChatClient.from_secrets(secrets)
     if client.available:
         emitted = False
         async for piece in client.chat_stream(

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends
 
 from ....container import Container
 from ....contracts.common import Channel, CredentialKind
+from ..domain.models import MODEL_AUTH_TOKEN, MODEL_BASE_URL, MODEL_NAME, WORKSPACE_DEFAULT_VERSION
 from ....contracts.errors import NotFound
 from ....contracts.identity import Permission, ResourceRef
 from ....schemas.response import list_response, ok
@@ -33,6 +34,7 @@ from .schemas import (
     RegisterAgentRequest,
     SdkKeyRequest,
     SecretDTO,
+    ModelConfigRequest,
     PutSecretRequest,
     BindSecretRequest,
     SecretBindingDTO,
@@ -238,6 +240,99 @@ async def put_secret(
     )
 
 
+@router.get("/secret-bindings")
+async def list_secret_bindings(
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    """列出**工作区默认**的密钥绑定——对所有 Agent 生效的那一层。
+
+    单个版本可以覆盖它们，覆盖关系在 Agent 详情里看。
+    """
+    assert_permission(container, actor, Permission.ASSET_READ)
+    bindings = await assets.workspace_secret_bindings(actor.workspace_id)
+    secrets = {item.id: item for item in await assets.list_secrets(actor.workspace_id)}
+    return list_response(
+        [
+            SecretBindingDTO(
+                id=item.id,
+                asset_version_id=item.asset_version_id,
+                channel=item.channel.value,
+                secret_name=item.secret_name,
+                resource_secret_id=item.resource_secret_id,
+                fingerprint=(secrets.get(item.resource_secret_id).fingerprint
+                             if secrets.get(item.resource_secret_id) else None),
+                bound_at=item.created_at,
+            ).model_dump()
+            for item in bindings
+        ]
+    )
+
+
+@router.post("/model-config")
+async def set_model_config(
+    payload: ModelConfigRequest,
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    """设置工作区**默认模型配置**（BASE_URL / AUTH_TOKEN / MODEL）。
+
+    它是 Agent 的兜底：Agent 不声明也能拿到；单个 Agent 在 spec 里声明同名
+    密钥即可覆盖。**测试与生产可以配不同的值**——按通道分别绑。
+    """
+    assert_permission(container, actor, Permission.ASSET_CREDENTIAL_CREATE)
+    values = {
+        MODEL_BASE_URL: payload.base_url,
+        MODEL_AUTH_TOKEN: payload.auth_token,
+        MODEL_NAME: payload.model_name,
+    }
+    bound: list[str] = []
+    for channel in (Channel.TEST, Channel.LIVE):
+        for name, value in values.items():
+            if value is None or not value.strip():
+                continue
+            secret = await assets.put_secret(
+                workspace_id=actor.workspace_id,
+                name=name,
+                plaintext=value,
+                created_by=actor.user_id,
+                description=f"工作区默认模型配置（{channel.value}）",
+            )
+            await assets.bind_workspace_default(
+                channel=channel,
+                secret_name=name,
+                resource_secret_id=secret.id,
+                workspace_id=actor.workspace_id,
+                bound_by=actor.user_id,
+            )
+            bound.append(f"{channel.value}/{name}")
+    return ok({"bound": bound})
+
+
+@router.delete("/secret-bindings/{channel}/{secret_name}")
+async def unbind_secret(
+    channel: Channel,
+    secret_name: str,
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+    workspace_default: bool = True,
+) -> dict:
+    """解绑工作区默认（或指定版本）。"""
+    assert_permission(container, actor, Permission.ASSET_CREDENTIAL_CREATE)
+    await assets.unbind_secret(
+        asset_version_id=(
+            WORKSPACE_DEFAULT_VERSION if workspace_default else ""
+        ),
+        channel=channel,
+        secret_name=secret_name,
+        workspace_id=actor.workspace_id,
+    )
+    return ok({"unbound": True})
+
+
 @router.post("/agents/{agent_id}/versions/{version_id}/secrets/{channel}/bind")
 async def bind_secret(
     version_id: str,
@@ -253,7 +348,9 @@ async def bind_secret(
     **TEST 与 LIVE 可以绑不同的密钥**——这是「测试/生产分离」的落点。
     """
     binding = await assets.bind_secret(
-        asset_version_id=version_id,
+        asset_version_id=(
+            WORKSPACE_DEFAULT_VERSION if payload.workspace_default else version_id
+        ),
         channel=channel,
         secret_name=payload.secret_name,
         resource_secret_id=payload.resource_secret_id,

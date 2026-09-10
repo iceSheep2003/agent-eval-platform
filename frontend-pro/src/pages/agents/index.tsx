@@ -36,6 +36,11 @@ import {
   promoteAgentVersion,
   registerAgent,
 } from '@/services/eval/agents';
+import {
+  bindSecret,
+  listAgentVersions,
+  putSecret,
+} from '@/services/eval/secrets';
 import type { AgentCredential } from '@/services/eval/credentials';
 import { getAgentCredentials } from '@/services/eval/credentials';
 import type { Member } from '@/services/eval/members';
@@ -403,14 +408,62 @@ export default function AgentsPage() {
     } else {
       Object.assign(source, { sdk: values.sdk, credential_id: values.credential });
     }
+    // 平台托管的 Agent 必须声明记忆作用域——`sdk` 接入自己管，不用声明。
+    if (connectKind !== 'sdk') {
+      Object.assign(source, {
+        memory: { scope: values.memory_scope ?? 'thread' },
+      });
+    }
+    // 模型覆盖：表单里填的是**明文**，要「存密钥 → 声明引用 → 绑到版本」三步走，
+    // 只把它塞进 source 是没用的——spec 里只能有引用，不能有值。
+    const modelValues = (
+      [
+        ['model_base_url', values.model_base_url],
+        ['model_auth_token', values.model_auth_token],
+        ['model_name', values.model_name],
+      ] as Array<[string, string | undefined]>
+    ).filter(([, value]) => typeof value === 'string' && value.trim());
+    if (modelValues.length) {
+      Object.assign(source, {
+        secrets: modelValues.map(([name]) => ({ name, required: false })),
+      });
+    }
     try {
-      await registerAgent(workspace.id, {
+      const created = await registerAgent(workspace.id, {
         name: values.name,
         description: values.description ?? '',
         owner_id: values.owner_id,
         connect_type: connectKind,
         source,
       });
+
+      // 填了明文模型配置才需要「存 + 绑」这两步。失败不回滚 Agent——
+      // Agent 已经建成，密钥可以事后在「密钥管理」里补，不用让人重来一遍。
+      if (modelValues.length) {
+        try {
+          // 用返回的 **agent id**，不是名字——接口按 id 查。
+          const versions = await listAgentVersions(workspace.id, created.id);
+          const firstVersion = versions.items?.[0];
+          if (firstVersion) {
+            for (const [name, value] of modelValues) {
+              const secret = await putSecret(workspace.id, {
+                name,
+                value: value as string,
+                description: `Agent「${values.name}」的模型配置`,
+              });
+              for (const channel of ['test', 'live']) {
+                await bindSecret(workspace.id, created.id, firstVersion.id, channel, {
+                  resource_secret_id: secret.id,
+                  secret_name: name,
+                });
+              }
+            }
+          }
+        } catch {
+          message.warning('Agent 已接入，但模型配置没绑上，请到「密钥管理」里补');
+        }
+      }
+
       setConnectOpen(false);
       form.resetFields();
       message.success('Agent 接入成功');
@@ -1029,6 +1082,53 @@ export default function AgentsPage() {
                   <Input placeholder="python -m app.agent" />
                 </Form.Item>
               </div>
+            </>
+          )}
+          {connectKind !== 'sdk' && (
+            <>
+              <Form.Item
+                label="记忆作用域"
+                name="memory_scope"
+                initialValue="thread"
+                extra="多 Agent 编排会并发调用同一个 Agent，隐式全局状态必然串味，所以记忆由平台托管、按作用域隔离"
+              >
+                <Select
+                  options={[
+                    { label: '按会话隔离（推荐）', value: 'thread' },
+                    { label: '按租户共享', value: 'tenant' },
+                    { label: '该版本全局共享', value: 'agent_version' },
+                    { label: '不需要记忆', value: 'stateless' },
+                  ]}
+                />
+              </Form.Item>
+
+              <div className={styles.sdkNote}>
+                <KeyOutlined />
+                <div>
+                  <strong>模型配置（可选覆盖）</strong>
+                  <span>
+                    留空则使用「密钥管理」里的工作区默认模型。填了就在本 Agent 上覆盖该项。
+                  </span>
+                </div>
+              </div>
+              <div className={styles.formGrid}>
+                <Form.Item label="BASE_URL" name="model_base_url">
+                  <Input placeholder="留空则用工作区默认" />
+                </Form.Item>
+                <Form.Item label="MODEL" name="model_name">
+                  <Input placeholder="留空则用工作区默认" />
+                </Form.Item>
+              </div>
+              <Form.Item
+                label="AUTH_TOKEN"
+                name="model_auth_token"
+                extra="加密存储并由平台注入，不会出现在版本配置里"
+              >
+                <Input.Password
+                  placeholder="留空则用工作区默认"
+                  autoComplete="new-password"
+                />
+              </Form.Item>
             </>
           )}
           {connectKind === 'sdk' && (

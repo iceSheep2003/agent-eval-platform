@@ -76,12 +76,129 @@ body {
   background: var(--bg);
 }
 
+.app-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
 .app-content {
   flex: 1;
   min-width: 0;
   min-height: 0;
   overflow: auto;
   padding: 20px 24px;
+}
+
+/* ---------- 底部文档导航 ---------- */
+
+.app-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 24px;
+  border-top: 1px solid var(--line);
+  background: #fff;
+  font-size: 12px;
+}
+
+.footer-copy {
+  color: var(--muted);
+}
+
+.footer-links {
+  display: flex;
+  gap: 16px;
+}
+
+.footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.footer-link:hover,
+.footer-link-active {
+  color: var(--brand);
+}
+
+/* ---------- 文档 ---------- */
+
+.doc-group {
+  margin-bottom: 24px;
+}
+
+.doc-group-title {
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  margin-bottom: 10px;
+}
+
+.doc-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.doc-link {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.doc-link:hover {
+  border-color: var(--brand);
+  box-shadow: 0 6px 18px rgba(79, 124, 255, 0.12);
+}
+
+.doc-icon {
+  font-size: 20px;
+  color: var(--brand);
+  margin-top: 2px;
+  flex: none;
+}
+
+.doc-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.doc-summary {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.doc-page {
+  max-width: 860px;
+}
+
+.doc-card {
+  margin-top: 12px;
+  padding: 8px 24px 24px;
+}
+
+.doc-next {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 /* ---------- 左侧目录树 ---------- */

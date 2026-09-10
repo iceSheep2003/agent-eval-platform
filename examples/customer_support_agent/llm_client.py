@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from typing import Mapping
 from typing import AsyncIterator
 
 import httpx
@@ -51,6 +52,13 @@ def _anthropic_messages_url(url: str) -> str:
     return url if url.endswith("/v1/messages") else f"{url}/v1/messages"
 
 
+#: 平台注入的模型配置键。与 `modules/asset/domain/models.py` 里的同名常量对应，
+#: 但这里**不 import 平台代码**——示例 Agent 不该依赖控制面。
+MODEL_BASE_URL = "model_base_url"
+MODEL_AUTH_TOKEN = "model_auth_token"
+MODEL_NAME = "model_name"
+
+
 def llm_config_from_env() -> LLMConfig:
     anthropic_key = _first_env("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY")
     if anthropic_key:
@@ -74,6 +82,34 @@ def llm_config_from_env() -> LLMConfig:
 class ChatClient:
     def __init__(self, config: LLMConfig | None = None) -> None:
         self.config = config or llm_config_from_env()
+
+    @classmethod
+    def from_secrets(cls, secrets: Mapping[str, str] | None) -> "ChatClient":
+        """从平台注入的 `secrets` 构造。
+
+        平台托管的 Agent 应当用这个而不是读环境变量——凭证由平台按
+        「Agent 版本 × 通道」注入，测试与生产可以绑不同的 Key；
+        读环境变量则意味着两者共用一把，且改 Key 要重启平台。
+
+        **优先级**：Agent 自己声明的 `model_*` > 环境变量 > 默认值。
+        找不到任何可用配置时返回一个 `available=False` 的客户端，
+        由调用方决定降级——不抛异常。
+        """
+        secrets = secrets or {}
+        base_url = (secrets.get(MODEL_BASE_URL) or "").strip()
+        token = (secrets.get(MODEL_AUTH_TOKEN) or "").strip()
+        model = (secrets.get(MODEL_NAME) or "").strip()
+        if token:
+            return cls(
+                LLMConfig(
+                    api_key=token,
+                    base_url=base_url or os.getenv("ANTHROPIC_BASE_URL") or ANTHROPIC_BASE,
+                    model=model or "claude-sonnet-4-5",
+                    backend="anthropic",
+                )
+            )
+        # 没注入就退回环境变量那条路
+        return cls()
 
     @property
     def available(self) -> bool:

@@ -247,12 +247,28 @@ class SecretDTO(BaseModel):
 class BindSecretRequest(BaseModel):
     resource_secret_id: str = Field(min_length=1, max_length=64)
     secret_name: str = Field(min_length=1, max_length=128)
+    #: 绑到**工作区默认**（对该工作区所有 Agent 生效）而不是某个具体版本。
+    workspace_default: bool = False
 
 
 class SecretBindingDTO(BaseModel):
     id: str
+    #: `*` 表示工作区默认——对该工作区所有 Agent 生效。
     asset_version_id: str
     channel: str
     secret_name: str
     resource_secret_id: str
+    #: 该密钥当前绑的是哪一把（指纹），便于界面显示「实际生效的是哪个」。
+    fingerprint: str | None = None
     bound_at: datetime
+
+
+class ModelConfigRequest(BaseModel):
+    """工作区**默认模型配置**。三项都可不填——不填的那项就不注入。
+
+    这是 Agent 的兜底：单个 Agent 想在 spec 里声明同名密钥即可覆盖。
+    """
+
+    base_url: str | None = Field(default=None, max_length=512)
+    auth_token: str | None = Field(default=None, max_length=4096)
+    model_name: str | None = Field(default=None, max_length=128)

@@ -40,6 +40,8 @@ from ..domain.models import (
     AssetVersion,
     ChannelBinding,
     Credential,
+    MODEL_SECRET_NAMES,
+    WORKSPACE_DEFAULT_VERSION,
     ResolveMode,
     ResourceSecret,
     SecretBinding,
@@ -474,6 +476,14 @@ class AssetService:
         bound_by: str,
     ) -> SecretBinding:
         """把某个版本 + 通道上的某个密钥名绑定到一把具体的密钥。"""
+        if asset_version_id != WORKSPACE_DEFAULT_VERSION:
+            # 具体版本必须真实存在；`*` 是保留值，不查。
+            async with UnitOfWork(self._db) as uow:
+                version = await AssetVersionRepository(uow.session).get(
+                    asset_version_id, workspace_id
+                )
+            if version is None:
+                raise NotFound("版本", asset_version_id)
         async with UnitOfWork(self._db) as uow:
             secrets = ResourceSecretRepository(uow.session)
             secret = await secrets.get(resource_secret_id, workspace_id)
@@ -498,13 +508,61 @@ class AssetService:
             await uow.commit()
         return binding
 
+    async def bind_workspace_default(
+        self,
+        *,
+        channel: Channel,
+        secret_name: str,
+        resource_secret_id: str,
+        workspace_id: str,
+        bound_by: str,
+    ) -> SecretBinding:
+        """绑**工作区默认**：对该工作区所有 Agent 生效，具体版本可覆盖。
+
+        典型用法是模型配置——整个工作区配一次，个别 Agent 要换再单独覆盖。
+        """
+        return await self.bind_secret(
+            asset_version_id=WORKSPACE_DEFAULT_VERSION,
+            channel=channel,
+            secret_name=secret_name,
+            resource_secret_id=resource_secret_id,
+            workspace_id=workspace_id,
+            bound_by=bound_by,
+        )
+
+    async def unbind_secret(
+        self,
+        *,
+        asset_version_id: str,
+        channel: Channel,
+        secret_name: str,
+        workspace_id: str,
+    ) -> None:
+        """解绑。**默认绑定被解绑后，没有覆盖的版本会失去该密钥**——这是预期行为。"""
+        async with UnitOfWork(self._db) as uow:
+            removed = await SecretBindingRepository(uow.session).delete(
+                workspace_id, asset_version_id, channel, secret_name
+            )
+            if not removed:
+                raise NotFound("绑定", f"{channel.value}/{secret_name}")
+            await uow.commit()
+
     async def secret_bindings_of(
         self, asset_version_id: str, workspace_id: str
     ) -> Sequence[SecretBinding]:
+        """该版本**实际生效**的绑定：工作区默认 + 版本覆盖，合并后的结果。"""
+        async with UnitOfWork(self._db) as uow:
+            rows = await SecretBindingRepository(uow.session).list_for_scope(
+                workspace_id, asset_version_id
+            )
+        return _merge_scopes(rows)
+
+    async def workspace_secret_bindings(self, workspace_id: str) -> Sequence[SecretBinding]:
+        """工作区默认绑定——对所有 Agent 生效，单个版本可覆盖。"""
         async with UnitOfWork(self._db) as uow:
             return list(
-                await SecretBindingRepository(uow.session).list_for_version(
-                    asset_version_id
+                await SecretBindingRepository(uow.session).list_workspace_defaults(
+                    workspace_id
                 )
             )
 
@@ -513,7 +571,14 @@ class AssetService:
     ) -> Mapping[str, str]:
         """解析出**该版本该通道**要注入的密钥明文。
 
-        缺一把就报错——**不能静默少给**：Agent 拿到空密钥却继续跑，
+        两层解析，**版本覆盖默认**：
+        1. 工作区默认绑定（对所有 Agent 生效）；
+        2. 该版本自己的绑定（同名覆盖）。
+
+        模型配置（`MODEL_SECRET_NAMES`）**总是尝试注入**——不必在 spec 里声明；
+        该工作区没配就跳过，由 Agent 自己决定降级。
+
+        其余密钥缺一把就报错——**不能静默少给**：Agent 拿到空密钥却继续跑，
         会以「配置正确但行为诡异」的形式暴露，比直接失败难查得多。
         """
         async with UnitOfWork(self._db) as uow:
@@ -522,24 +587,40 @@ class AssetService:
             )
             if version is None:
                 raise NotFound("版本", asset_version_id)
-            bindings = await SecretBindingRepository(uow.session).list_for_version(
-                asset_version_id
+            rows = await SecretBindingRepository(uow.session).list_for_scope(
+                workspace_id, asset_version_id
             )
-            by_channel = {
-                item.secret_name: item
-                for item in bindings
-                if item.channel is channel
-            }
+            effective = [
+                item for item in _merge_scopes(rows) if item.channel is channel
+            ]
+            by_name = {item.secret_name: item for item in effective}
             secrets = ResourceSecretRepository(uow.session)
+
             resolved: dict[str, str] = {}
+
+            async def resolve_one(name: str) -> str | None:
+                binding = by_name.get(name)
+                if binding is None:
+                    return None
+                record = await secrets.get(binding.resource_secret_id, workspace_id)
+                if record is None:
+                    raise NotFound("密钥", binding.resource_secret_id)
+                return open_sealed(self._master_key, record.ciphertext)
+
+            # 平台内置的模型配置：不声明也注入，声明了就覆盖。
+            for name in MODEL_SECRET_NAMES:
+                value = await resolve_one(name)
+                if value is not None:
+                    resolved[name] = value
+
             for item in _as_list(version.spec.get("secrets")):
                 if not isinstance(item, Mapping):
                     continue
                 secret_name = str(item.get("name") or "")
                 if not secret_name:
                     continue
-                binding = by_channel.get(secret_name)
-                if binding is None:
+                value = await resolve_one(secret_name)
+                if value is None:
                     if item.get("required", True):
                         raise DomainError(
                             Errors.CHANNEL_UNBOUND,
@@ -547,10 +628,7 @@ class AssetService:
                             secret_name=secret_name,
                         )
                     continue
-                record = await secrets.get(binding.resource_secret_id, workspace_id)
-                if record is None:
-                    raise NotFound("密钥", binding.resource_secret_id)
-                resolved[secret_name] = open_sealed(self._master_key, record.ciphertext)
+                resolved[secret_name] = value
             return resolved
 
     # -- 写入 ----------------------------------------------------------------
@@ -1063,3 +1141,18 @@ def _as_list(value: object) -> list[object]:
     if value is None:
         return []
     return list(value) if isinstance(value, (list, tuple)) else [value]
+
+def _merge_scopes(bindings: Sequence[SecretBinding]) -> list[SecretBinding]:
+    """合并「工作区默认」与「版本专属」两层，**后者覆盖前者**。
+
+    按 `(通道, 密钥名)` 粒度覆盖——不是整条记录覆盖。这样默认绑了三项、
+    版本只想改其中一项时，另两项仍然来自默认。
+    """
+    merged: dict[tuple[Channel, str], SecretBinding] = {}
+    for item in bindings:
+        if item.is_workspace_default:
+            merged.setdefault((item.channel, item.secret_name), item)
+    for item in bindings:
+        if not item.is_workspace_default:
+            merged[(item.channel, item.secret_name)] = item
+    return list(merged.values())
