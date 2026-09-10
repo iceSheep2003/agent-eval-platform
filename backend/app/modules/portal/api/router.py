@@ -320,6 +320,7 @@ async def portal_chat(
             message=message,
             messages=payload.messages,
             timeout_seconds=payload.timeout_seconds,
+            thread_id=payload.thread_id,
         )
         return ok(
             {
@@ -366,6 +367,7 @@ async def portal_chat(
             message=message,
             messages=payload.messages,
             timeout_seconds=payload.timeout_seconds,
+            thread_id=payload.thread_id,
         )
         try:
             while True:

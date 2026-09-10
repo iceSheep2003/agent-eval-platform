@@ -547,6 +547,7 @@ class PortalService:
         message: str,
         messages: Sequence[Mapping[str, object]] = (),
         timeout_seconds: float = 60.0,
+        thread_id: str | None = None,
     ) -> InvokeResult:
         """按通道打一次（非流式）。**版本由通道解析**，调用方给不了版本号。"""
         request = await self._authorize(
@@ -557,6 +558,7 @@ class PortalService:
             message=message,
             messages=messages,
             timeout_seconds=timeout_seconds,
+            thread_id=thread_id,
         )
         return await self._invoke.invoke_channel(request)
 
@@ -570,6 +572,7 @@ class PortalService:
         message: str,
         messages: Sequence[Mapping[str, object]] = (),
         timeout_seconds: float = 60.0,
+        thread_id: str | None = None,
     ) -> AsyncIterator[InvokeEvent]:
         """按通道流式打一次。
 
@@ -584,6 +587,7 @@ class PortalService:
             message=message,
             messages=messages,
             timeout_seconds=timeout_seconds,
+            thread_id=thread_id,
         )
         async for event in self._invoke.stream_channel(request):
             yield event
@@ -598,6 +602,7 @@ class PortalService:
         message: str,
         messages: Sequence[Mapping[str, object]],
         timeout_seconds: float,
+        thread_id: str | None = None,
     ) -> ChannelInvocation:
         """把「这次调用合不合法」全部查完，返回可执行的请求。"""
         if channel not in PORTAL_CHANNELS:
@@ -639,6 +644,8 @@ class PortalService:
             messages=tuple(messages),
             timeout_seconds=timeout_seconds,
             credential_id=binding.deployment_credential_id,
+            # 一次对话 = 一个 thread：记忆按会话隔离，换会话不串。
+            thread_id=thread_id,
         )
 
 

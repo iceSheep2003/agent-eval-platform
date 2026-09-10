@@ -69,6 +69,8 @@ class ChannelInvocation:
     #: 调用方自己的请求 ID，用于把平台 Trace 和调用方日志对上。
     request_id: Id | None = None
     credential_id: Id | None = None
+    #: 会话 ID。展示平台一次对话 = 一个 thread；为空表示该版本该租户的默认记忆片。
+    thread_id: Id | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "messages", tuple(dict(item) for item in self.messages))

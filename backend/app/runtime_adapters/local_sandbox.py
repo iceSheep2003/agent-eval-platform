@@ -125,6 +125,10 @@ def _arguments_for(
     secrets = payload.get("__secrets__")
     if secrets and "secrets" in inspect.signature(target).parameters:
         arguments["secrets"] = secrets
+    # 记忆句柄同理——Agent 声明 `memory` 形参才会拿到。
+    memory = payload.get("__memory__")
+    if memory is not None and "memory" in inspect.signature(target).parameters:
+        arguments["memory"] = memory
     return arguments
 
 

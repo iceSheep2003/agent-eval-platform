@@ -12,9 +12,10 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, AsyncIterator, Mapping, Sequence
+from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 
 from ....contracts.asset import AssetQueryPort, AssetVersionRef, SecretResolverPort
+from ....contracts.memory import MemoryKey, MemorySessionPort
 from ....contracts.common import (
     Channel,
     Determinism,
@@ -755,6 +756,7 @@ class InvokeService:
         traces: TraceWriterPort | None = None,
         clock: Clock | None = None,
         secrets: SecretResolverPort | None = None,
+        memory_factory: Callable[[MemoryKey, Id], MemorySessionPort] | None = None,
     ) -> None:
         self._assets = assets
         self._runtime = runtime
@@ -762,6 +764,9 @@ class InvokeService:
         self._clock = clock or SystemClock()
         #: 资源密钥解析。**可选**——没配的部署不注入密钥。
         self._secrets = secrets
+        #: 记忆工厂：`(分区键, 工作区) → 句柄`。由组合根注入具体实现，
+        #: execution 只认契约，不依赖 memory 模块。
+        self._memory_factory = memory_factory
 
     async def invoke_channel(self, request: ChannelInvocation) -> InvokeResult:
         version, ctx, payload = await self._prepare(request)
@@ -860,7 +865,33 @@ class InvokeService:
         secrets = await self._resolve_secrets(version, request)
         if secrets:
             payload["__secrets__"] = secrets
+        # 记忆句柄按「版本 × 租户 × 会话」分区——少一维都会读到别人的记忆。
+        memory = self._build_memory(version, request)
+        if memory is not None:
+            payload["__memory__"] = memory
         return version, ctx, payload
+
+    def _build_memory(
+        self, version: AssetVersionRef, request: ChannelInvocation
+    ) -> MemorySessionPort | None:
+        """版本声明了 memory 作用域才给句柄；`stateless` 明确不要记忆。"""
+        if self._memory_factory is None:
+            return None
+        declared = version.spec.get("memory")
+        if not isinstance(declared, Mapping):
+            return None
+        scope = str(declared.get("scope") or "")
+        if scope in ("", "stateless"):
+            return None
+        return self._memory_factory(
+            MemoryKey(
+                agent_version_id=version.id,
+                tenant_id=request.tenant_id,
+                thread_id=request.thread_id,
+                scope=scope,  # type: ignore[arg-type]
+            ),
+            request.workspace_id,
+        )
 
     async def _resolve_secrets(
         self, version: AssetVersionRef, request: ChannelInvocation

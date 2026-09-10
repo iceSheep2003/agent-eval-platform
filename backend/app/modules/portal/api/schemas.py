@@ -69,6 +69,8 @@ class PortalChatRequest(BaseModel):
     messages: list[dict[str, Any]] = Field(default_factory=list)
     timeout_seconds: float = Field(default=60.0, gt=0, le=600)
     stream: bool = False
+    #: 会话 ID。前端一次对话用一个固定值——**换了它记忆就不串**。
+    thread_id: str | None = Field(default=None, max_length=64)
 
     def resolved_message(self) -> str:
         if self.message.strip():

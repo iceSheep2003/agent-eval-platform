@@ -17,6 +17,7 @@ from .modules.delivery.application.services import DeliveryService
 from .modules.execution.application.services import ExecutionHandlers, InvokeService, RunService
 from .runtime_adapters.local_sandbox import LocalSandboxRuntime
 from .modules.identity.application.services import IdentityService
+from .modules.memory.application.services import MemoryService
 from .modules.identity.domain.authorizer import Authorizer
 from .modules.observability.application.services import TraceService
 from .modules.portal.application.services import (
@@ -94,8 +95,20 @@ class Container:
         traces = TraceService(database, resolved_clock, assets, attributions=assets)
         # delivery 多了 traces——LIVESH→LIVE 晋级要比对影子与基线的真实指标
         delivery = DeliveryService(database, resolved_clock, assets, assets, runs, traces)
+        # 记忆工厂：execution 只认「给我一个能出收窄句柄的东西」，
+        # 不 import memory 模块的具体实现。
+        def build_memory(key, workspace_id):
+            return MemoryService(
+                database, resolved_clock, workspace_id=workspace_id
+            ).for_key(key)
+
         invoke = InvokeService(
-            assets, sandbox, traces=traces, clock=resolved_clock, secrets=assets
+            assets,
+            sandbox,
+            traces=traces,
+            clock=resolved_clock,
+            secrets=assets,
+            memory_factory=build_memory,
         )
         portal_auth = PortalAuthService(
             database, resolved_clock, session_hours=resolved.portal_session_hours

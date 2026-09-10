@@ -40,6 +40,9 @@ PREFIXES: dict[str, str] = {
     "artifact": "art",
     "secret": "sec",
     "secret_binding": "sb",
+    # memory
+    "memory": "mem",
+    "memory_thread": "mt",
     # dataset
     "dataset": "ds",
     "dataset_version": "dsv",
