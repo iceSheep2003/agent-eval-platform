@@ -202,6 +202,47 @@ async def _archive_scenario(tmp_path) -> None:
         await container.shutdown()
 
 
+MUTABLE_STATE_SOURCE = '''
+"""模块级可变状态：并发调用必串味。"""
+_state = {}
+
+
+def leaky_agent(input: str) -> str:  # noqa: A002
+    global _state
+    _state["seen"] = input
+    return input
+'''
+
+
+def test_mutable_module_state_is_reported(tmp_path) -> None:
+    """模块级可变状态必须被**静态**查出来。
+
+    编排会并发调同一个 Agent；「单跑都对、一并发就错」是最难定位的一类 bug，
+    所以不等它出事——探针扫到就报。
+    """
+    import textwrap
+
+    from backend.app.modules.asset.domain.spec.conformance import check_entrypoint
+    from backend.app.runtime_adapters.local_sandbox import LocalSandboxRuntime
+
+    module_file = tmp_path / "leaky_agent_module.py"
+    module_file.write_text(textwrap.dedent(MUTABLE_STATE_SOURCE), encoding="utf-8")
+
+    import sys
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        report = LocalSandboxRuntime().probe("leaky_agent_module:leaky_agent")
+        assert report.mutable_globals == ("_state",), report.mutable_globals
+
+        result = check_entrypoint(report)
+        assert not result.ok
+        codes = {issue.code for issue in result.issues}
+        assert "cross_call_state" in codes, result.messages()
+    finally:
+        sys.path.remove(str(tmp_path))
+
+
 def test_archived_agent_can_be_restored(tmp_path) -> None:
     asyncio.run(_archive_scenario(tmp_path))
 

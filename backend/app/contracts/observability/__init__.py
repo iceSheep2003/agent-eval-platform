@@ -40,6 +40,9 @@ class InvocationTrace:
     output: Any | None = None
     error: str | None = None
     usage: Usage = field(default_factory=Usage)
+    #: 父调用的 **invocation id**（调用方原样传进来的那个，不做变换）。
+    #: 与父 Trace 的对应是确定性的：`parent.external_trace_id == f"gw-{parent_invocation_id}"`。
+    parent_invocation_id: Id | None = None
     #: 补充事实。**只放指纹类信息**（如用了哪把密钥），不放任何明文。
     metadata: Mapping[str, Any] = field(default_factory=dict)
 

@@ -218,6 +218,7 @@ class TraceService:
             usage=trace.usage,
             span_count=0,
             ingested_via="gateway",
+            parent_invocation_id=trace.parent_invocation_id,
             metadata=dict(trace.metadata),
         )
         async with UnitOfWork(self._db) as uow:

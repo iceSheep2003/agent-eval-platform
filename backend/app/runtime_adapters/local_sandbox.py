@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import importlib
 import inspect
@@ -98,6 +99,37 @@ def _as_text(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False)
     except (TypeError, ValueError):
         return str(value)
+
+
+def _mutable_module_state(entrypoint: str) -> tuple[str, ...]:
+    """静态扫出被测模块里**可跨调用变更**的模块级变量。
+
+    判据：模块级函数里出现 `global x` 且对 x 赋值。`customer_support_agent`
+    的 `_memory` / `_context` 就是这样——两次并发调用会互相看见对方的会话。
+
+    **只报不改**：有些 Agent 确实需要进程内缓存，那是设计选择；
+    但编排场景下必须让人知道，否则「单跑都对、一并发就错」极难定位。
+    """
+    module_path = entrypoint.partition(":")[0]
+    try:
+        module = importlib.import_module(module_path)
+        source = inspect.getsource(module)
+    except Exception:  # noqa: BLE001 - 拿不到源码就不报，不阻断
+        return ()
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return ()
+
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Global):
+                names.update(inner.names)
+    return tuple(sorted(names))
 
 
 def _target_of(payload: Mapping[str, Any]) -> Callable[..., Any]:
@@ -250,6 +282,7 @@ class LocalSandboxRuntime:
         return EntrypointReport(
             entrypoint=entrypoint,
             importable=True,
+            mutable_globals=_mutable_module_state(entrypoint),
             accepts_input="input" in parameters,
             accepts_messages="messages" in parameters,
             accepts_secrets="secrets" in parameters,

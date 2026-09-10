@@ -792,6 +792,8 @@ class InvokeService:
             duration_ms=result.duration_ms,
             cost_usd=result.cost_usd,
             version_label=version.version_label,
+            # 编排拿它当子调用的 parent，调用树才连得起来。
+            invocation_id=payload["__invocation_id__"],
         )
 
     async def stream_channel(
@@ -832,6 +834,7 @@ class InvokeService:
             extra_metadata={
                 "secrets": payload.get("__secret_fingerprints__", {}),
                 "thread_id": request.thread_id,
+                "invocation_id": payload.get("__invocation_id__"),
             },
         )
 
@@ -869,6 +872,9 @@ class InvokeService:
             "__entrypoint__": version.entrypoint,
             "input": request.input,
         }
+        # 调用 id 在**开始**就定下来，不是落 Trace 时现生成：
+        # 编排要拿它作为子调用的 parent，晚生成就等于拿不到。
+        payload["__invocation_id__"] = request.request_id or new_id("invocation")
         if request.messages:
             payload["messages"] = [dict(item) for item in request.messages]
         # 密钥按「版本 × 通道」解析成明文注入。**缺一把就失败**——不能静默少给，
@@ -960,7 +966,9 @@ class InvokeService:
                     asset_version_id=version.id,
                     channel=request.channel,
                     origin=_ORIGIN_BY_CHANNEL[request.channel],
-                    external_trace_id=f"gw-{request.request_id or new_id('invocation')}",
+                    # **必须**与 payload 里那个 id 一致：回传的 invocation_id 就是它。
+                    # 这里再兜底生成一个的话，编排拿到的会是死链。
+                    external_trace_id=f"gw-{(extra_metadata or {}).get('invocation_id')}",
                     name=f"{request.channel.value} 通道调用",
                     status="error" if result.error else "success",
                     started_at=started_at,
@@ -969,6 +977,7 @@ class InvokeService:
                     output=result.output,
                     error=result.error,
                     usage=result.usage,
+                    parent_invocation_id=request.parent_invocation_id,
                     metadata=extra_metadata or {},
                 )
             )
@@ -997,4 +1006,5 @@ def _trace_metadata(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "secrets": payload.get("__secret_fingerprints__", {}),
         "thread_id": payload.get("__thread_id__"),
+        "invocation_id": payload.get("__invocation_id__"),
     }

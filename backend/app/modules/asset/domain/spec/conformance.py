@@ -144,6 +144,18 @@ def check_entrypoint(
             )
         )
 
+    if report.mutable_globals:
+        names = "、".join(report.mutable_globals)
+        issues.append(
+            ValidationIssue(
+                "entrypoint.mutable_state",
+                "cross_call_state",
+                f"模块级可变状态：{names}。编排会**并发**调用同一个 Agent，"
+                f"这种状态必然串味，且「单跑都对、一并发就错」极难定位。"
+                f"记忆请改用 `memory` 形参，配置走 `secrets`。",
+            )
+        )
+
     if require_streaming and not report.supports_streaming:
         issues.append(
             ValidationIssue(

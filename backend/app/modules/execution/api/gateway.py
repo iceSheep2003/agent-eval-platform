@@ -84,6 +84,8 @@ async def invoke_agent(
             "duration_ms": result.duration_ms,
             "cost_usd": result.cost_usd,
             "trace_id": result.trace_id,
+            # 编排拿它当子调用的 `parent_invocation_id`——不给就断链。
+            "invocation_id": result.invocation_id,
             "notice": SHADOW_NOTICE if channel is Channel.LIVESH else None,
         }
     )

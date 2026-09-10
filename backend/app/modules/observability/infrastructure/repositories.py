@@ -44,6 +44,7 @@ def _trace(row: TraceRow) -> TraceRecord:
         usage=_usage(row),
         span_count=row.span_count,
         ingested_via=row.ingested_via,  # type: ignore[arg-type]
+        parent_invocation_id=row.parent_invocation_id,
     )
 
 
@@ -281,6 +282,7 @@ class TraceRepository:
                 cost_usd=trace.usage.cost.amount,
                 span_count=trace.span_count,
                 ingested_via=trace.ingested_via,
+                parent_invocation_id=trace.parent_invocation_id,
             )
         )
         for span in spans:

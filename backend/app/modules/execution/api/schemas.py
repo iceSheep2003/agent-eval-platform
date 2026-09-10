@@ -13,7 +13,9 @@ from ..domain.models import Run, RunResult, ScoreRecord, Trial
 class InvokeRequest(BaseModel):
     """`POST /v1/agents/{id}/invoke`。`channel` 决定打哪个版本，不给版本号。"""
 
-    input: str = Field(min_length=1)
+    #: **字符串是简写**。编排时上游产出的是结构化对象，直接原样传下去，
+    #: 不必序列化成 JSON 文本让下游再解析一遍。
+    input: Any = Field(description="公开输入：字符串，或任意结构化 JSON")
     channel: Literal["test", "livesh", "live"] = "live"
     messages: list[dict[str, Any]] = Field(default_factory=list)
     timeout_seconds: float = Field(default=60.0, gt=0, le=600)

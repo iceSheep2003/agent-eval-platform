@@ -42,6 +42,7 @@ from .deps import (
     set_portal_cookie,
 )
 from .schemas import (
+    is_blank,
     AddHubMemberRequest,
     AttachHubAgentRequest,
     BindPortalChannelRequest,
@@ -277,7 +278,7 @@ async def portal_chat(
     hub = actor.hub
     model = f"{hub_agent_id}@{channel.value}"
     message = payload.resolved_message()
-    if not message.strip():
+    if is_blank(message):
         raise DomainError(Errors.VALIDATION_FAILED, "对话内容为空")
 
     # 限流放在开流之前：超限时还能返回正常的 429 JSON，而不是一条已经开始的 SSE。

@@ -60,7 +60,9 @@ class ChannelInvocation:
     workspace_id: Id
     asset_id: Id
     channel: Channel
-    input: str
+    #: 公开输入。**字符串是简写**；编排时上游产出的是结构化数据，直接原样传下去，
+    #: 不必序列化成 JSON 文本让下游再解析一遍。
+    input: JsonValue
     #: 完整对话上下文。多数被测 Agent 只接受 `input`，由适配器按签名过滤。
     messages: tuple[Mapping[str, Any], ...] = ()
     tenant_id: Id | None = None
@@ -71,6 +73,11 @@ class ChannelInvocation:
     credential_id: Id | None = None
     #: 会话 ID。展示平台一次对话 = 一个 thread；为空表示该版本该租户的默认记忆片。
     thread_id: Id | None = None
+    #: **父调用**。编排调子 Agent 时挂上自己那次调用的 id。
+    #:
+    #: 没有这个字段，编排的每次子调用在 Trace 里就是一棵独立的树——拿不到
+    #: 「整个系统这次调用花了多少」、归因不到「子 Agent 失败是编排的问题还是它自己的」。
+    parent_invocation_id: Id | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "messages", tuple(dict(item) for item in self.messages))
@@ -88,6 +95,9 @@ class InvokeResult:
     usage: Usage = field(default_factory=Usage)
     #: 实际命中的版本标签，便于调用方展示「这次打的是哪个版本」。
     version_label: str | None = None
+    #: **本次调用的 id**。编排拿到后应当原样作为子调用的 `parent_invocation_id` 传下去，
+    #: 调用树才连得起来。
+    invocation_id: Id | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +145,11 @@ class EntrypointReport:
     #: 异步生成器 → 支持真流式；协程/普通函数 → 一次性。
     is_async_generator: bool = False
     is_async: bool = False
+    #: 被测模块里**可跨调用变更的模块级状态**（`global x` + 赋值）。
+    #:
+    #: 编排会并发调用同一个 Agent 的多个实例；这种隐式全局状态必然串味，
+    #: 而且极难定位——单跑都对，一并发就错。这里静态查出来，不等出事。
+    mutable_globals: tuple[str, ...] = ()
     error: str | None = None
 
     @property

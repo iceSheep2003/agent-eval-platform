@@ -65,15 +65,18 @@ class PortalChatRequest(BaseModel):
     的 `OpenAIChatProvider`，不必自己写 SSE 解析。
     """
 
-    message: str = ""
+    #: **字符串是简写**；编排场景可以是结构化对象。
+    message: Any = ""
     messages: list[dict[str, Any]] = Field(default_factory=list)
     timeout_seconds: float = Field(default=60.0, gt=0, le=600)
     stream: bool = False
     #: 会话 ID。前端一次对话用一个固定值——**换了它记忆就不串**。
     thread_id: str | None = Field(default=None, max_length=64)
 
-    def resolved_message(self) -> str:
-        if self.message.strip():
+    def resolved_message(self) -> Any:
+        if isinstance(self.message, str) and self.message.strip():
+            return self.message
+        if not isinstance(self.message, str) and self.message is not None:
             return self.message
         for item in reversed(self.messages):
             if item.get("role") == "user" and item.get("content"):
@@ -111,3 +114,14 @@ class BindPortalChannelRequest(BaseModel):
     """把一把 `evl_` 部署密钥挂到某通道上。密钥本身由 asset 侧签发。"""
 
     deployment_credential_id: str = Field(min_length=1, max_length=64)
+
+
+def is_blank(value: Any) -> bool:
+    """判空。结构化输入只要不是 None / 空容器 / 空串，就算有内容。"""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, dict, set)):
+        return len(value) == 0
+    return False
