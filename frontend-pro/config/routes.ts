@@ -73,7 +73,7 @@ export default [
   },
   {
     path: '/settings',
-    name: '组织与成员',
+    name: '工作区设置',
     icon: 'TeamOutlined',
     routes: [
       { path: '/settings', redirect: '/settings/members' },

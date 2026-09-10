@@ -8,7 +8,7 @@
  * 组织里没有账号的人，先加到组织才能加进项目。
  */
 
-import { MailOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { MailOutlined, PlusOutlined } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
 import {
   App,
@@ -20,17 +20,23 @@ import {
   Select,
   Space,
   Table,
+  Tabs,
   Tag,
 } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 import { useWorkspace } from '@/hooks/useWorkspace';
-import type { Invitation, Member, OrgRole, WorkspaceRole } from '@/services/eval/members';
+import type {
+  Invitation,
+  Member,
+  OrgRole,
+  WorkspaceRole,
+} from '@/services/eval/members';
 import {
   addOrgMember,
   addWorkspaceMember,
   getInvitations,
-  getOrgMembers,
   getOrganizations,
+  getOrgMembers,
   getWorkspaceMembers,
   inviteToOrganization,
   removeOrgMember,
@@ -39,6 +45,7 @@ import {
   updateOrgMemberRole,
   updateWorkspaceMemberRole,
 } from '@/services/eval/members';
+import PolicyPanel from './PolicyPanel';
 
 const ORG_ROLES: OrgRole[] = ['owner', 'admin', 'member', 'viewer'];
 const WORKSPACE_ROLES: WorkspaceRole[] = [
@@ -65,6 +72,22 @@ const WORKSPACE_ROLE_LABEL: Record<WorkspaceRole, string> = {
 };
 
 export default function MembersPage() {
+  return (
+    <PageContainer
+      title="工作区设置"
+      content="组织管成员和项目；项目成员管本项目的评测资产。两层角色职责不同。"
+    >
+      <Tabs
+        items={[
+          { key: 'members', label: '成员', children: <MembersPanel /> },
+          { key: 'policy', label: '治理策略', children: <PolicyPanel /> },
+        ]}
+      />
+    </PageContainer>
+  );
+}
+
+function MembersPanel() {
   const workspace = useWorkspace();
   const { message } = App.useApp();
   const [form] = Form.useForm();
@@ -73,7 +96,9 @@ export default function MembersPage() {
   const [orgMembers, setOrgMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [workspaceMembers, setWorkspaceMembers] = useState<Member[]>([]);
-  const [adding, setAdding] = useState<'org' | 'workspace' | 'invite' | null>(null);
+  const [adding, setAdding] = useState<'org' | 'workspace' | 'invite' | null>(
+    null,
+  );
 
   const refresh = useCallback(async () => {
     if (!workspace) return;
@@ -83,9 +108,13 @@ export default function MembersPage() {
       const organization = organizations.items[0];
       setOrganizationId(organization?.id);
       const [org, members, invites] = await Promise.all([
-        organization ? getOrgMembers(organization.id) : Promise.resolve({ items: [] }),
+        organization
+          ? getOrgMembers(organization.id)
+          : Promise.resolve({ items: [] }),
         getWorkspaceMembers(workspace.id),
-        organization ? getInvitations(organization.id) : Promise.resolve({ items: [] }),
+        organization
+          ? getInvitations(organization.id)
+          : Promise.resolve({ items: [] }),
       ]);
       setOrgMembers(org.items);
       setWorkspaceMembers(members.items);
@@ -137,7 +166,6 @@ export default function MembersPage() {
   };
 
   const memberColumns = (
-    scope: 'org' | 'workspace',
     roles: string[],
     labels: Record<string, string>,
     onRoleChange: (userId: string, role: string) => Promise<void>,
@@ -163,7 +191,10 @@ export default function MembersPage() {
           size="small"
           value={item.role}
           style={{ width: 160 }}
-          options={roles.map((role) => ({ label: labels[role] ?? role, value: role }))}
+          options={roles.map((role) => ({
+            label: labels[role] ?? role,
+            value: role,
+          }))}
           onChange={(role) => void onRoleChange(item.user_id, role)}
         />
       ),
@@ -186,15 +217,7 @@ export default function MembersPage() {
   ];
 
   return (
-    <PageContainer
-      title="组织与成员"
-      content="组织管成员和项目；项目成员管本项目的 Agent、数据集与评测资产。两层角色职责不同。"
-      extra={
-        <Button icon={<ReloadOutlined />} onClick={() => void refresh()}>
-          刷新
-        </Button>
-      }
-    >
+    <>
       <section style={{ marginBottom: 24 }}>
         <header
           style={{
@@ -239,12 +262,15 @@ export default function MembersPage() {
           pagination={false}
           dataSource={orgMembers}
           columns={memberColumns(
-            'org',
             ORG_ROLES,
             ORG_ROLE_LABEL,
             async (userId, role) => {
               if (!organizationId) return;
-              await updateOrgMemberRole(organizationId, userId, role as OrgRole);
+              await updateOrgMemberRole(
+                organizationId,
+                userId,
+                role as OrgRole,
+              );
               message.success('角色已更新');
               await refresh();
             },
@@ -345,12 +371,15 @@ export default function MembersPage() {
           pagination={false}
           dataSource={workspaceMembers}
           columns={memberColumns(
-            'workspace',
             WORKSPACE_ROLES,
             WORKSPACE_ROLE_LABEL,
             async (userId, role) => {
               if (!workspace) return;
-              await updateWorkspaceMemberRole(workspace.id, userId, role as WorkspaceRole);
+              await updateWorkspaceMemberRole(
+                workspace.id,
+                userId,
+                role as WorkspaceRole,
+              );
               message.success('角色已更新，该成员需重新登录');
               await refresh();
             },
@@ -390,7 +419,11 @@ export default function MembersPage() {
                 : '账号需已存在。组织成员才能加进项目。'
             }
           >
-            <Input placeholder={adding === 'invite' ? 'name@company.com' : '用户名或邮箱'} />
+            <Input
+              placeholder={
+                adding === 'invite' ? 'name@company.com' : '用户名或邮箱'
+              }
+            />
           </Form.Item>
           <Form.Item
             label="角色"
@@ -398,17 +431,19 @@ export default function MembersPage() {
             initialValue={adding === 'org' ? 'member' : 'viewer'}
           >
             <Select
-              options={(adding === 'org' ? ORG_ROLES : WORKSPACE_ROLES).map((role) => ({
-                label:
-                  adding === 'org'
-                    ? ORG_ROLE_LABEL[role as OrgRole]
-                    : WORKSPACE_ROLE_LABEL[role as WorkspaceRole],
-                value: role,
-              }))}
+              options={(adding === 'org' ? ORG_ROLES : WORKSPACE_ROLES).map(
+                (role) => ({
+                  label:
+                    adding === 'org'
+                      ? ORG_ROLE_LABEL[role as OrgRole]
+                      : WORKSPACE_ROLE_LABEL[role as WorkspaceRole],
+                  value: role,
+                }),
+              )}
             />
           </Form.Item>
         </Form>
       </Modal>
-    </PageContainer>
+    </>
   );
 }

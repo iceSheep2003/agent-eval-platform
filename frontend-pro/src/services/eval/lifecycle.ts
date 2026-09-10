@@ -33,6 +33,31 @@ export type LifecyclePolicy = {
   transitions: LifecycleTransition[];
 };
 
+export type ParamSpec = {
+  key: string;
+  label: string;
+  type: 'number' | 'select' | 'text';
+  default: unknown;
+  options: string[];
+  step: number | null;
+  help: string | null;
+};
+
+export type CheckSchema = {
+  name: LifecycleCheckName;
+  label: string;
+  description: string;
+  params: ParamSpec[];
+};
+
+/**
+ * 可用检查项与它们的参数 schema。
+ *
+ * **前端不写死参数**——加检查项只改后端，界面自动多出对应表单。
+ */
+export const getLifecycleChecks = () =>
+  call<{ items: CheckSchema[] }>('/api/lifecycle-policy/checks');
+
 export const getLifecyclePolicy = () =>
   call<LifecyclePolicy>('/api/lifecycle-policy');
 
