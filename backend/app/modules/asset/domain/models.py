@@ -141,3 +141,35 @@ class Artifact:
 def default_version_label(existing: int) -> str:
     """首个版本 0.1.0，之后 0.1.N —— 保持语义化版本且可排序。"""
     return "0.1.0" if existing == 0 else f"0.1.{existing}"
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceSecret:
+    """资源密钥。**明文不在这里**——领域对象只带密文与指纹。
+
+    需要明文只有一个入口：`AssetService.resolve_secrets`，它在调用前解密、
+    用完即弃，并记一条带指纹的 Trace。
+    """
+
+    id: Id
+    workspace_id: Id
+    name: str
+    ciphertext: str
+    fingerprint: str
+    description: str
+    created_by: Id
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SecretBinding:
+    """Agent 版本 + 通道 → 用哪把密钥。`version_id` 为空表示「该 Agent 所有版本共用」。"""
+
+    id: Id
+    workspace_id: Id
+    asset_version_id: Id
+    channel: Channel
+    secret_name: str
+    resource_secret_id: Id
+    bound_by: Id
+    created_at: datetime

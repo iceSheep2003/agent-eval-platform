@@ -14,7 +14,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, AsyncIterator, Mapping, Sequence
 
-from ....contracts.asset import AssetQueryPort, AssetVersionRef
+from ....contracts.asset import AssetQueryPort, AssetVersionRef, SecretResolverPort
 from ....contracts.common import (
     Channel,
     Determinism,
@@ -754,11 +754,14 @@ class InvokeService:
         *,
         traces: TraceWriterPort | None = None,
         clock: Clock | None = None,
+        secrets: SecretResolverPort | None = None,
     ) -> None:
         self._assets = assets
         self._runtime = runtime
         self._traces = traces
         self._clock = clock or SystemClock()
+        #: 资源密钥解析。**可选**——没配的部署不注入密钥。
+        self._secrets = secrets
 
     async def invoke_channel(self, request: ChannelInvocation) -> InvokeResult:
         version, ctx, payload = await self._prepare(request)
@@ -852,7 +855,26 @@ class InvokeService:
         }
         if request.messages:
             payload["messages"] = [dict(item) for item in request.messages]
+        # 密钥按「版本 × 通道」解析成明文注入。**缺一把就失败**——不能静默少给，
+        # 否则 Agent 会以「配置看起来对、行为很诡异」的形式暴露，比直接报错难查得多。
+        secrets = await self._resolve_secrets(version, request)
+        if secrets:
+            payload["__secrets__"] = secrets
         return version, ctx, payload
+
+    async def _resolve_secrets(
+        self, version: AssetVersionRef, request: ChannelInvocation
+    ) -> dict[str, str]:
+        """版本没声明 `secrets` 就跳过——绝大多数 Agent 不需要。"""
+        if not _declares_secrets(version.spec) or self._secrets is None:
+            return {}
+        return dict(
+            await self._secrets.resolve_secrets(
+                asset_version_id=version.id,
+                channel=request.channel,
+                workspace_id=request.workspace_id,
+            )
+        )
 
     async def _provision(
         self,
@@ -914,3 +936,9 @@ def _as_text(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False)
     except (TypeError, ValueError):
         return str(value)
+
+
+def _declares_secrets(spec: Mapping[str, Any]) -> bool:
+    """版本 spec 里声明了密钥引用才去解析——省掉绝大多数调用的无用查询。"""
+    declared = spec.get("secrets")
+    return isinstance(declared, (list, tuple)) and len(declared) > 0

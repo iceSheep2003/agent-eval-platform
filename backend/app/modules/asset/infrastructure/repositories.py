@@ -17,6 +17,8 @@ from ..domain.models import (
     AssetVersion,
     ChannelBinding,
     Credential,
+    ResourceSecret,
+    SecretBinding,
 )
 from .tables import (
     ArtifactRow,
@@ -25,6 +27,8 @@ from .tables import (
     AssetVersionRow,
     ChannelBindingRow,
     CredentialRow,
+    ResourceSecretRow,
+    SecretBindingRow,
 )
 
 
@@ -466,3 +470,118 @@ class ArtifactRepository:
                 build_status=artifact.build_status,
             )
         )
+
+
+def _resource_secret(row: ResourceSecretRow) -> ResourceSecret:
+    return ResourceSecret(
+        id=row.id,
+        workspace_id=row.workspace_id,
+        name=row.name,
+        ciphertext=row.ciphertext,
+        fingerprint=row.fingerprint,
+        description=row.description,
+        created_by=row.created_by,
+        created_at=ensure_aware(row.created_at),
+    )
+
+
+def _secret_binding(row: SecretBindingRow) -> SecretBinding:
+    return SecretBinding(
+        id=row.id,
+        workspace_id=row.workspace_id,
+        asset_version_id=row.asset_version_id,
+        channel=Channel(row.channel),
+        secret_name=row.secret_name,
+        resource_secret_id=row.resource_secret_id,
+        bound_by=row.bound_by,
+        created_at=ensure_aware(row.created_at),
+    )
+
+
+class ResourceSecretRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, secret_id: str, workspace_id: str) -> ResourceSecret | None:
+        stmt = select(ResourceSecretRow).where(
+            ResourceSecretRow.id == secret_id,
+            ResourceSecretRow.workspace_id == workspace_id,
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _resource_secret(row) if row else None
+
+    async def find_by_name(self, workspace_id: str, name: str) -> ResourceSecret | None:
+        """按名字取**最新**的一把——同名可有多条历史，取最近创建的。"""
+        stmt = (
+            select(ResourceSecretRow)
+            .where(
+                ResourceSecretRow.workspace_id == workspace_id,
+                ResourceSecretRow.name == name,
+            )
+            .order_by(ResourceSecretRow.created_at.desc())
+            .limit(1)
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _resource_secret(row) if row else None
+
+    async def list_for_workspace(self, workspace_id: str) -> Sequence[ResourceSecret]:
+        stmt = (
+            select(ResourceSecretRow)
+            .where(ResourceSecretRow.workspace_id == workspace_id)
+            .order_by(ResourceSecretRow.created_at.desc())
+        )
+        return [
+            _resource_secret(row)
+            for row in (await self._session.execute(stmt)).scalars().all()
+        ]
+
+    def add(self, secret: ResourceSecret) -> None:
+        self._session.add(
+            ResourceSecretRow(
+                id=secret.id,
+                workspace_id=secret.workspace_id,
+                name=secret.name,
+                ciphertext=secret.ciphertext,
+                fingerprint=secret.fingerprint,
+                description=secret.description,
+                created_by=secret.created_by,
+            )
+        )
+
+
+class SecretBindingRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_for_version(self, asset_version_id: str) -> Sequence[SecretBinding]:
+        stmt = select(SecretBindingRow).where(
+            SecretBindingRow.asset_version_id == asset_version_id
+        )
+        return [
+            _secret_binding(row)
+            for row in (await self._session.execute(stmt)).scalars().all()
+        ]
+
+    async def upsert(self, binding: SecretBinding) -> None:
+        """按 `(版本, 通道, 密钥名)` 覆盖。重新绑 = 改指针，不新增行。"""
+        stmt = select(SecretBindingRow).where(
+            SecretBindingRow.asset_version_id == binding.asset_version_id,
+            SecretBindingRow.channel == binding.channel.value,
+            SecretBindingRow.secret_name == binding.secret_name,
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            self._session.add(
+                SecretBindingRow(
+                    id=binding.id,
+                    workspace_id=binding.workspace_id,
+                    asset_version_id=binding.asset_version_id,
+                    channel=binding.channel.value,
+                    secret_name=binding.secret_name,
+                    resource_secret_id=binding.resource_secret_id,
+                    bound_by=binding.bound_by,
+                )
+            )
+            return
+        row.resource_secret_id = binding.resource_secret_id
+        row.bound_by = binding.bound_by

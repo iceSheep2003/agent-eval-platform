@@ -121,6 +121,10 @@ def _arguments_for(
     capabilities = payload.get("__capabilities__")
     if capabilities and "capabilities" in inspect.signature(target).parameters:
         arguments["capabilities"] = capabilities
+    # 资源密钥同理：Agent 没声明 `secrets` 形参就不传，不会打破现有签名。
+    secrets = payload.get("__secrets__")
+    if secrets and "secrets" in inspect.signature(target).parameters:
+        arguments["secrets"] = secrets
     return arguments
 
 

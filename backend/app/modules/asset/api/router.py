@@ -32,6 +32,10 @@ from .schemas import (
     IssuedCredentialDTO,
     RegisterAgentRequest,
     SdkKeyRequest,
+    SecretDTO,
+    PutSecretRequest,
+    BindSecretRequest,
+    SecretBindingDTO,
 )
 
 router = APIRouter(tags=["asset"])
@@ -159,6 +163,90 @@ async def version_conformance(
                 for item in result.issues
             ],
         }
+    )
+
+
+@router.get("/secrets")
+async def list_secrets(
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    """列出工作区的资源密钥。**永远不返回明文**，只有指纹。"""
+    assert_permission(container, actor, Permission.ASSET_READ)
+    items = await assets.list_secrets(actor.workspace_id)
+    return list_response(
+        [
+            SecretDTO(
+                id=item.id,
+                name=item.name,
+                fingerprint=item.fingerprint,
+                description=item.description,
+                created_at=item.created_at,
+            ).model_dump()
+            for item in items
+        ]
+    )
+
+
+@router.post("/secrets")
+async def put_secret(
+    payload: PutSecretRequest,
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    """存一把资源密钥（LLM Key / MCP Token）。密文入库，明文只在请求体里出现一次。"""
+    assert_permission(container, actor, Permission.ASSET_CREDENTIAL_CREATE)
+    secret = await assets.put_secret(
+        workspace_id=actor.workspace_id,
+        name=payload.name,
+        plaintext=payload.value,
+        created_by=actor.user_id,
+        description=payload.description,
+    )
+    return ok(
+        SecretDTO(
+            id=secret.id,
+            name=secret.name,
+            fingerprint=secret.fingerprint,
+            description=secret.description,
+            created_at=secret.created_at,
+        ).model_dump()
+    )
+
+
+@router.post("/agents/{agent_id}/versions/{version_id}/secrets/{channel}/bind")
+async def bind_secret(
+    version_id: str,
+    channel: Channel,
+    payload: BindSecretRequest,
+    asset: Annotated[Asset, Depends(require_on_agent(Permission.ASSET_CREDENTIAL_CREATE))],
+    actor: Actor,
+    container: Annotated[Container, Depends(get_container)],
+    assets: Annotated[AssetService, Depends(get_asset_service)],
+) -> dict:
+    """把某个版本+通道上的密钥名绑定到一把具体的密钥。
+
+    **TEST 与 LIVE 可以绑不同的密钥**——这是「测试/生产分离」的落点。
+    """
+    binding = await assets.bind_secret(
+        asset_version_id=version_id,
+        channel=channel,
+        secret_name=payload.secret_name,
+        resource_secret_id=payload.resource_secret_id,
+        workspace_id=asset.workspace_id,
+        bound_by=actor.user_id,
+    )
+    return ok(
+        SecretBindingDTO(
+            id=binding.id,
+            asset_version_id=binding.asset_version_id,
+            channel=binding.channel.value,
+            secret_name=binding.secret_name,
+            resource_secret_id=binding.resource_secret_id,
+            bound_at=binding.created_at,
+        ).model_dump()
     )
 
 

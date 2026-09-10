@@ -145,6 +145,21 @@ class AssetQueryPort(Protocol):
         """三通道 → 当前绑定的版本 ID。晋级/回退据此判断「版本现在在哪」。"""
         ...
 
+@runtime_checkable
+class SecretResolverPort(Protocol):
+    """由 asset 实现；execution 在调用前用它把密钥引用解析成明文。
+
+    **只有 execution 能拿到明文**——其他模块（含 portal、observability）都拿不到，
+    它们看到的只有指纹。这样「谁用了哪把钥匙」可以记录，「钥匙是什么」不外扩。
+    """
+
+    async def resolve_secrets(
+        self, *, asset_version_id: Id, channel: Channel, workspace_id: Id
+    ) -> Mapping[str, str]:
+        """返回 `密钥名 → 明文`。未绑定且 required 的密钥**应当报错**，不能静默省略。"""
+        ...
+
+
 __all__ = [
     "AssetQueryPort",
     "AttributionTargetPort",
@@ -153,6 +168,7 @@ __all__ = [
     "AssetVersionRef",
     "CapabilityAttributionRef",
     "CredentialContext",
+    "SecretResolverPort",
     "CredentialResolverPort",
 ]
 

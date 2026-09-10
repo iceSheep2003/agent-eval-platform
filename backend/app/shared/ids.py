@@ -38,6 +38,8 @@ PREFIXES: dict[str, str] = {
     "binding": "bnd",
     "credential": "cred",
     "artifact": "art",
+    "secret": "sec",
+    "secret_binding": "sb",
     # dataset
     "dataset": "ds",
     "dataset_version": "dsv",

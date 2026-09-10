@@ -132,3 +132,50 @@ class ArtifactRow(Base, TimestampMixin):
     source_ref: Mapped[str] = mapped_column(String(512), nullable=False)
     checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     build_status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+
+
+class ResourceSecretRow(Base, TimestampMixin):
+    """资源密钥的**密文**。明文只在写入那一刻存在于内存里。
+
+    与 `asset_credential` 的分工：
+    - `asset_credential` 是**平台发给外部的凭证**（`evk_`/`evl_`），只存哈希、不可还原；
+    - 本表是**Agent 运行时要用的密钥**（LLM Key、MCP Token），必须可还原，故加密。
+    """
+
+    __tablename__ = "asset_resource_secret"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    #: Agent 版本 spec 里 `secrets[].name` 引用的名字，如 `llm_api_key`。
+    name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    #: Fernet 密文。主密钥不进数据库，泄露库也解不开。
+    ciphertext: Mapped[str] = mapped_column(String(1024), nullable=False)
+    #: 短指纹，用于日志与展示「用的是哪一把」，不可反推明文。
+    fingerprint: Mapped[str] = mapped_column(String(16), nullable=False)
+    description: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class SecretBindingRow(Base, TimestampMixin):
+    """Agent 版本 × 通道 → 用哪把密钥。
+
+    **指针**：值（`asset_resource_secret`）可变、可轮换，指针可回滚。
+    与 `asset_binding`（能力资产引用）是同一个形状——都是「不可变版本里的引用，
+    在调用时解析成当前值」。
+    """
+
+    __tablename__ = "asset_secret_binding"
+    __table_args__ = (
+        UniqueConstraint(
+            "asset_version_id", "channel", "secret_name", name="uq_secret_binding"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    asset_version_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    #: test | liversh | live
+    channel: Mapped[str] = mapped_column(String(16), nullable=False)
+    secret_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource_secret_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    bound_by: Mapped[str] = mapped_column(String(64), nullable=False)

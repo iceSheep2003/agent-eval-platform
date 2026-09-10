@@ -30,6 +30,7 @@ from ....persistence import UnitOfWork
 from ....persistence.database import Database
 from ....shared.clock import Clock
 from ....shared.ids import new_id
+from ....shared.crypto import fingerprint, open_sealed, seal
 from ....shared.secrets import hash_secret, last_four, new_secret
 from ..domain import spec as spec_registry
 from ..domain.models import (
@@ -40,10 +41,14 @@ from ..domain.models import (
     ChannelBinding,
     Credential,
     ResolveMode,
+    ResourceSecret,
+    SecretBinding,
     default_version_label,
 )
 from ..infrastructure.repositories import (
     AssetBindingRepository,
+    ResourceSecretRepository,
+    SecretBindingRepository,
     AssetRepository,
     AssetVersionRepository,
     ChannelBindingRepository,
@@ -77,6 +82,7 @@ class AssetService:
         tenants: TenantProvisioningPort,
         members: MembershipQueryPort,
         prober: EntrypointProbePort | None = None,
+        master_key: str = "",
     ) -> None:
         self._db = database
         self._clock = clock
@@ -84,6 +90,8 @@ class AssetService:
         self._members = members
         #: 执行面的探针。**可选**——纯离线场景（只建资产不跑）可以不接。
         self._prober = prober
+        #: 加解密资源密钥用。为空时相关接口直接报错，不静默降级。
+        self._master_key = master_key
 
     # -- 开发规范验收 --------------------------------------------------------
 
@@ -275,6 +283,136 @@ class AssetService:
     async def list_credentials(self, workspace_id: str) -> Sequence[Credential]:
         async with UnitOfWork(self._db) as uow:
             return list(await CredentialRepository(uow.session).list_for_workspace(workspace_id))
+
+    # -- 资源密钥 ------------------------------------------------------------
+
+    async def put_secret(
+        self,
+        *,
+        workspace_id: str,
+        name: str,
+        plaintext: str,
+        created_by: str,
+        description: str = "",
+    ) -> ResourceSecret:
+        """存一把密钥。**同名可以有多把**——轮换就是再存一把，旧的不动。
+
+        这样「回滚」只是把指针改回旧的那把，不需要任何恢复操作。
+        """
+        if not plaintext.strip():
+            raise DomainError(Errors.VALIDATION_FAILED, "密钥明文不能为空")
+        if not self._master_key:
+            raise DomainError(Errors.VALIDATION_FAILED, "未配置主密钥，无法加密资源密钥")
+        secret = ResourceSecret(
+            id=new_id("secret"),
+            workspace_id=workspace_id,
+            name=name,
+            ciphertext=seal(self._master_key, plaintext),
+            fingerprint=fingerprint(plaintext),
+            description=description,
+            created_by=created_by,
+            created_at=self._clock.now(),
+        )
+        async with UnitOfWork(self._db) as uow:
+            ResourceSecretRepository(uow.session).add(secret)
+            await uow.commit()
+        return secret
+
+    async def list_secrets(self, workspace_id: str) -> Sequence[ResourceSecret]:
+        async with UnitOfWork(self._db) as uow:
+            return list(
+                await ResourceSecretRepository(uow.session).list_for_workspace(workspace_id)
+            )
+
+    async def bind_secret(
+        self,
+        *,
+        asset_version_id: str,
+        channel: Channel,
+        secret_name: str,
+        resource_secret_id: str,
+        workspace_id: str,
+        bound_by: str,
+    ) -> SecretBinding:
+        """把某个版本 + 通道上的某个密钥名绑定到一把具体的密钥。"""
+        async with UnitOfWork(self._db) as uow:
+            secrets = ResourceSecretRepository(uow.session)
+            secret = await secrets.get(resource_secret_id, workspace_id)
+            if secret is None:
+                raise NotFound("密钥", resource_secret_id)
+            if secret.name != secret_name:
+                raise DomainError(
+                    Errors.VALIDATION_FAILED,
+                    f"密钥名字对不上：引用 {secret_name!r}，拿到的是 {secret.name!r}",
+                )
+            binding = SecretBinding(
+                id=new_id("secret_binding"),
+                workspace_id=workspace_id,
+                asset_version_id=asset_version_id,
+                channel=channel,
+                secret_name=secret_name,
+                resource_secret_id=resource_secret_id,
+                bound_by=bound_by,
+                created_at=self._clock.now(),
+            )
+            await SecretBindingRepository(uow.session).upsert(binding)
+            await uow.commit()
+        return binding
+
+    async def secret_bindings_of(
+        self, asset_version_id: str, workspace_id: str
+    ) -> Sequence[SecretBinding]:
+        async with UnitOfWork(self._db) as uow:
+            return list(
+                await SecretBindingRepository(uow.session).list_for_version(
+                    asset_version_id
+                )
+            )
+
+    async def resolve_secrets(
+        self, *, asset_version_id: str, channel: Channel, workspace_id: str
+    ) -> Mapping[str, str]:
+        """解析出**该版本该通道**要注入的密钥明文。
+
+        缺一把就报错——**不能静默少给**：Agent 拿到空密钥却继续跑，
+        会以「配置正确但行为诡异」的形式暴露，比直接失败难查得多。
+        """
+        async with UnitOfWork(self._db) as uow:
+            version = await AssetVersionRepository(uow.session).get(
+                asset_version_id, workspace_id
+            )
+            if version is None:
+                raise NotFound("版本", asset_version_id)
+            bindings = await SecretBindingRepository(uow.session).list_for_version(
+                asset_version_id
+            )
+            by_channel = {
+                item.secret_name: item
+                for item in bindings
+                if item.channel is channel
+            }
+            secrets = ResourceSecretRepository(uow.session)
+            resolved: dict[str, str] = {}
+            for item in _as_list(version.spec.get("secrets")):
+                if not isinstance(item, Mapping):
+                    continue
+                secret_name = str(item.get("name") or "")
+                if not secret_name:
+                    continue
+                binding = by_channel.get(secret_name)
+                if binding is None:
+                    if item.get("required", True):
+                        raise DomainError(
+                            Errors.CHANNEL_UNBOUND,
+                            f"密钥 {secret_name!r} 在 {channel.value} 通道上未绑定",
+                            secret_name=secret_name,
+                        )
+                    continue
+                record = await secrets.get(binding.resource_secret_id, workspace_id)
+                if record is None:
+                    raise NotFound("密钥", binding.resource_secret_id)
+                resolved[secret_name] = open_sealed(self._master_key, record.ciphertext)
+            return resolved
 
     # -- 写入 ----------------------------------------------------------------
 
@@ -765,3 +903,10 @@ class AssetService:
 
 
 __all__ = ["AssetService", "IssuedCredential"]
+
+
+def _as_list(value: object) -> list[object]:
+    """spec 里的列表字段，容忍 None 与单值。"""
+    if value is None:
+        return []
+    return list(value) if isinstance(value, (list, tuple)) else [value]

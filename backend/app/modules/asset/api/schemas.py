@@ -224,3 +224,35 @@ class CredentialDTO(BaseModel):
     expires_at: datetime | None
     last_used_at: datetime | None
     created_at: datetime
+
+
+class PutSecretRequest(BaseModel):
+    """存一把资源密钥。**同名可以有多把**——轮换就是再存一把，旧的不动。"""
+
+    name: str = Field(min_length=1, max_length=128)
+    value: str = Field(min_length=1, max_length=4096)
+    description: str = Field(default="", max_length=512)
+
+
+class SecretDTO(BaseModel):
+    """**不含明文**：只给指纹，用于确认「用的是哪一把」。"""
+
+    id: str
+    name: str
+    fingerprint: str
+    description: str
+    created_at: datetime
+
+
+class BindSecretRequest(BaseModel):
+    resource_secret_id: str = Field(min_length=1, max_length=64)
+    secret_name: str = Field(min_length=1, max_length=128)
+
+
+class SecretBindingDTO(BaseModel):
+    id: str
+    asset_version_id: str
+    channel: str
+    secret_name: str
+    resource_secret_id: str
+    bound_at: datetime

@@ -69,7 +69,14 @@ class Container:
         # 沙箱同时是执行面与**探针**：它能在进程内 import entrypoint 看签名。
         # 必须先于 AssetService 建——校验器要用它做开发规范验收。
         sandbox = LocalSandboxRuntime()
-        assets = AssetService(database, resolved_clock, identity, identity, sandbox)
+        assets = AssetService(
+            database,
+            resolved_clock,
+            identity,
+            identity,
+            sandbox,
+            resolved.master_key,
+        )
         datasets = DatasetService(database, resolved_clock)
         evaluations = EvaluationService(database, resolved_clock, datasets, assets)
         runs = RunService(
@@ -87,7 +94,9 @@ class Container:
         traces = TraceService(database, resolved_clock, assets, attributions=assets)
         # delivery 多了 traces——LIVESH→LIVE 晋级要比对影子与基线的真实指标
         delivery = DeliveryService(database, resolved_clock, assets, assets, runs, traces)
-        invoke = InvokeService(assets, sandbox, traces=traces, clock=resolved_clock)
+        invoke = InvokeService(
+            assets, sandbox, traces=traces, clock=resolved_clock, secrets=assets
+        )
         portal_auth = PortalAuthService(
             database, resolved_clock, session_hours=resolved.portal_session_hours
         )
